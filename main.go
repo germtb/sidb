@@ -62,7 +62,8 @@ func Init(namespace []string, name string) (*Database, error) {
     	"timestamp" INTEGER NOT NULL,
 		"type" VARCHAR(255),
 		"value" BLOB,
-		"key" VARCHAR(255) NOT NULL UNIQUE
+		"key" VARCHAR(255) NOT NULL,
+		UNIQUE("type", "key")
 	);
 
 		CREATE INDEX IF NOT EXISTS idx_entries_timestamp ON entries(timestamp);
