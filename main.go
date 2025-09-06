@@ -17,15 +17,17 @@ type Database struct {
 }
 
 type EntryInput struct {
-	Type string
-	Data []byte
+	Type  string
+	Key   string
+	Value []byte
 }
 
 type DbEntry struct {
 	Id        int64
 	Timestamp int64
 	Type      string
-	Data      []byte
+	Key       string
+	Value     []byte
 }
 
 func RootPath() string {
@@ -58,12 +60,14 @@ func Init(namespace []string, name string) (*Database, error) {
 	createTableSQL := `CREATE TABLE IF NOT EXISTS entries (
 		"id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
     	"timestamp" INTEGER NOT NULL,
-		"type" TEXT,
-		"data" BLOB
+		"type" VARCHAR(255),
+		"value" BLOB,
+		"key" VARCHAR(255) NOT NULL UNIQUE
 	);
-	
+
 		CREATE INDEX IF NOT EXISTS idx_entries_timestamp ON entries(timestamp);
 		CREATE INDEX IF NOT EXISTS idx_entries_type ON entries(type);
+		CREATE INDEX IF NOT EXISTS idx_entries_type_key ON entries(type, key);
 	`
 
 	_, err = sqliteDb.Exec(createTableSQL)
@@ -77,7 +81,7 @@ func Init(namespace []string, name string) (*Database, error) {
 	return database, nil
 }
 
-func (db *Database) Get(id int64) (*DbEntry, error) {
+func (db *Database) GetById(id int64) (*DbEntry, error) {
 	database, err := sql.Open("sqlite3", db.Path)
 
 	if err != nil {
@@ -85,10 +89,10 @@ func (db *Database) Get(id int64) (*DbEntry, error) {
 	}
 	defer database.Close()
 
-	row := database.QueryRow("SELECT id, timestamp, type, data FROM entries WHERE id = ?", id)
+	row := database.QueryRow("SELECT id, timestamp, type, value, key FROM entries WHERE id = ?", id)
 
 	var entry DbEntry
-	err = row.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Data)
+	err = row.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Value, &entry.Key)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil // No entry found
@@ -108,13 +112,13 @@ func (db *Database) Put(entry EntryInput) (int64, error) {
 
 	defer database.Close()
 
-	stmt, err := database.Prepare("INSERT INTO entries(type, data, timestamp) VALUES(?, ?, ?)")
+	stmt, err := database.Prepare("INSERT INTO entries(type, value, timestamp, key) VALUES(?, ?, ?, ?)")
 	if err != nil {
 		return 0, err
 	}
 	defer stmt.Close()
 
-	result, err := stmt.Exec(entry.Type, entry.Data, time.Now().UnixMilli())
+	result, err := stmt.Exec(entry.Type, entry.Value, time.Now().UnixMilli(), entry.Key)
 	if err != nil {
 		return 0, err
 	}
@@ -161,7 +165,7 @@ func (db *Database) BulkPutForget(entries []EntryInput) error {
 		return err
 	}
 
-	stmt, err := tx.Prepare("INSERT INTO entries(type, data, timestamp) VALUES(?, ?, ?)")
+	stmt, err := tx.Prepare("INSERT INTO entries(type, value, timestamp, key) VALUES(?, ?, ?, ?)")
 	if err != nil {
 		tx.Rollback()
 		return err
@@ -169,7 +173,7 @@ func (db *Database) BulkPutForget(entries []EntryInput) error {
 	defer stmt.Close()
 
 	for _, e := range entries {
-		if _, err := stmt.Exec(e.Type, e.Data, time.Now().UnixMilli()); err != nil {
+		if _, err := stmt.Exec(e.Type, e.Value, time.Now().UnixMilli(), e.Key); err != nil {
 			tx.Rollback()
 			return err
 		}
@@ -191,7 +195,7 @@ func (db *Database) BulkLoad(limit int) ([]DbEntry, error) {
 	}
 	defer database.Close()
 
-	rows, err := database.Query("SELECT id, timestamp, type, data FROM entries ORDER BY timestamp DESC LIMIT ?", limit)
+	rows, err := database.Query("SELECT id, timestamp, type, value, key FROM entries ORDER BY timestamp DESC LIMIT ?", limit)
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +204,7 @@ func (db *Database) BulkLoad(limit int) ([]DbEntry, error) {
 	var entries []DbEntry
 	for rows.Next() {
 		var entry DbEntry
-		if err := rows.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Data); err != nil {
+		if err := rows.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Value, &entry.Key); err != nil {
 			return nil, err
 		}
 		entries = append(entries, entry)
@@ -248,7 +252,7 @@ func (db *Database) Query(
 	}
 	defer database.Close()
 
-	query := "SELECT id, timestamp, type, data FROM entries WHERE 1=1"
+	query := "SELECT id, timestamp, type, value, key FROM entries WHERE 1=1"
 
 	var args []interface{}
 
@@ -287,7 +291,7 @@ func (db *Database) Query(
 	var entries []DbEntry
 	for rows.Next() {
 		var entry DbEntry
-		if err := rows.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Data); err != nil {
+		if err := rows.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Value, &entry.Key); err != nil {
 			return nil, err
 		}
 		entries = append(entries, entry)
