@@ -63,7 +63,7 @@ func TestBulkPutForget(t *testing.T) {
 	}
 }
 
-func TestGet(t *testing.T) {
+func TestGetById(t *testing.T) {
 	namespace := []string{"test_namespace"}
 	name := "test_db"
 	db, err := Init(namespace, name)
@@ -85,6 +85,43 @@ func TestGet(t *testing.T) {
 
 	if entry.Id != id {
 		t.Errorf("Expected entry ID %d, got %d", id, entry.Id)
+	}
+	if entry.Type != entryType {
+		t.Errorf("Expected entry type %s, got %s", entryType, entry.Type)
+	}
+	if string(entry.Value) != string(data) {
+		t.Errorf("Expected entry data %s, got %s", string(data), string(entry.Value))
+	}
+
+	err = db.Drop()
+	if err != nil {
+		t.Fatalf("Failed to drop database: %v", err)
+	}
+}
+
+func TestGetByKey(t *testing.T) {
+	namespace := []string{"test_namespace"}
+	name := "test_db"
+	db, err := Init(namespace, name)
+	if err != nil {
+		t.Fatalf("Failed to initialize database: %v", err)
+	}
+
+	entryType := "test_type"
+	data := []byte("test_data")
+	key := "test_key"
+	_, err = db.Put(EntryInput{Type: entryType, Value: data, Key: key})
+	if err != nil {
+		t.Fatalf("Failed to put entry: %v", err)
+	}
+
+	entry, err := db.GetByKey(key)
+	if err != nil {
+		t.Fatalf("Failed to get entry: %v", err)
+	}
+
+	if entry.Key != key {
+		t.Errorf("Expected entry key %s, got %s", key, entry.Key)
 	}
 	if entry.Type != entryType {
 		t.Errorf("Expected entry type %s, got %s", entryType, entry.Type)

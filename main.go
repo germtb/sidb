@@ -104,6 +104,28 @@ func (db *Database) GetById(id int64) (*DbEntry, error) {
 	return &entry, nil
 }
 
+func (db *Database) GetByKey(key string) (*DbEntry, error) {
+	database, err := sql.Open("sqlite3", db.Path)
+
+	if err != nil {
+		return nil, err
+	}
+
+	defer database.Close()
+
+	row := database.QueryRow("SELECT id, timestamp, type, value, key FROM entries WHERE key = ?", key)
+	var entry DbEntry
+	err = row.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Value, &entry.Key)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil // No entry found
+		}
+		return nil, err
+	}
+
+	return &entry, nil
+}
+
 func (db *Database) Put(entry EntryInput) (int64, error) {
 	database, err := sql.Open("sqlite3", db.Path)
 	if err != nil {
