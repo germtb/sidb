@@ -78,7 +78,7 @@ func TestGetById(t *testing.T) {
 		t.Fatalf("Failed to put entry: %v", err)
 	}
 
-	entry, err := db.GetById(id)
+	entry, err := db.Get(id)
 	if err != nil {
 		t.Fatalf("Failed to get entry: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestDelete(t *testing.T) {
 		t.Fatalf("Failed to delete entry: %v", err)
 	}
 
-	entry, err := db.GetById(id)
+	entry, err := db.Get(id)
 
 	if err != nil {
 		t.Fatalf("Error occurred while getting deleted entry: %v", err)
@@ -171,6 +171,42 @@ func TestDelete(t *testing.T) {
 		t.Fatalf("Failed to drop database: %v", err)
 	}
 
+}
+
+func TestDeleteByKey(t *testing.T) {
+	namespace := []string{"test_namespace"}
+	name := "test_db"
+	db, err := Init(namespace, name)
+	if err != nil {
+		t.Fatalf("Failed to initialize database: %v", err)
+	}
+
+	entryType := "test_type"
+	data := []byte("test_data")
+	key := "test_key"
+	_, err = db.Put(EntryInput{Type: entryType, Value: data, Key: key})
+	if err != nil {
+		t.Fatalf("Failed to put entry: %v", err)
+	}
+
+	err = db.DeleteByKey(key, entryType)
+	if err != nil {
+		t.Fatalf("Failed to delete entry by key: %v", err)
+	}
+
+	entry, err := db.GetByKey(key, entryType)
+	if err != nil {
+		t.Fatalf("Error occurred while getting deleted entry: %v", err)
+	}
+
+	if entry != nil {
+		t.Errorf("Expected nil entry after deletion, got %+v", entry)
+	}
+
+	err = db.Drop()
+	if err != nil {
+		t.Fatalf("Failed to drop database: %v", err)
+	}
 }
 
 func TestQuery(t *testing.T) {

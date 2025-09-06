@@ -81,7 +81,7 @@ func Init(namespace []string, name string) (*Database, error) {
 	return database, nil
 }
 
-func (db *Database) GetById(id int64) (*DbEntry, error) {
+func (db *Database) Get(id int64) (*DbEntry, error) {
 	database, err := sql.Open("sqlite3", db.Path)
 
 	if err != nil {
@@ -172,6 +172,25 @@ func (db *Database) Delete(id int64) error {
 		return err
 	}
 
+	return nil
+}
+
+func (db *Database) DeleteByKey(key string, entryType string) error {
+	database, err := sql.Open("sqlite3", db.Path)
+	if err != nil {
+		return err
+	}
+	defer database.Close()
+
+	stmt, err := database.Prepare("DELETE FROM entries WHERE key = ? AND type = ?")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	_, err = stmt.Exec(key, entryType)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
