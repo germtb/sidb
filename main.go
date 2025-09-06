@@ -104,7 +104,7 @@ func (db *Database) GetById(id int64) (*DbEntry, error) {
 	return &entry, nil
 }
 
-func (db *Database) GetByKey(key string) (*DbEntry, error) {
+func (db *Database) GetByKey(key string, entryType string) (*DbEntry, error) {
 	database, err := sql.Open("sqlite3", db.Path)
 
 	if err != nil {
@@ -113,7 +113,7 @@ func (db *Database) GetByKey(key string) (*DbEntry, error) {
 
 	defer database.Close()
 
-	row := database.QueryRow("SELECT id, timestamp, type, value, key FROM entries WHERE key = ?", key)
+	row := database.QueryRow("SELECT id, timestamp, type, value, key FROM entries WHERE key = ? AND type = ?", key, entryType)
 	var entry DbEntry
 	err = row.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Value, &entry.Key)
 	if err != nil {

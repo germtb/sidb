@@ -115,7 +115,7 @@ func TestGetByKey(t *testing.T) {
 		t.Fatalf("Failed to put entry: %v", err)
 	}
 
-	entry, err := db.GetByKey(key)
+	entry, err := db.GetByKey(key, entryType)
 	if err != nil {
 		t.Fatalf("Failed to get entry: %v", err)
 	}
