@@ -154,6 +154,24 @@ func (db *Database) Put(entry EntryInput) (int64, error) {
 	return id, nil
 }
 
+func (db *Database) Update(entry EntryInput) error {
+	database, err := sql.Open("sqlite3", db.Path)
+	if err != nil {
+		return err
+	}
+	defer database.Close()
+
+	stmt, err := database.Prepare("UPDATE entries SET value = ? WHERE key = ? AND type = ?")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	_, err = stmt.Exec(entry.Value, entry.Key, entry.Type)
+
+	return err
+}
+
 func (db *Database) Delete(id int64) error {
 	database, err := sql.Open("sqlite3", db.Path)
 	if err != nil {

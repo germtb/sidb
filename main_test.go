@@ -12,16 +12,11 @@ func TestInit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to initialize database: %v", err)
 	}
+	defer db.Drop()
 	expectedDir := path.Join(append([]string{RootPath()}, namespace...)...)
 	expectedPath := path.Join(expectedDir, name+".db")
 	if db.Path != expectedPath {
 		t.Errorf("Expected database path %s, got %s", expectedPath, db.Path)
-	}
-
-	err = db.Drop()
-
-	if err != nil {
-		t.Fatalf("Failed to drop database: %v", err)
 	}
 }
 
@@ -32,6 +27,7 @@ func TestBulkPutForget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to initialize database: %v", err)
 	}
+	defer db.Drop()
 
 	entryType := "test_type"
 	data := []byte("test_data")
@@ -55,12 +51,6 @@ func TestBulkPutForget(t *testing.T) {
 	if string(entries[0].Value) != string(data) {
 		t.Errorf("Expected entry data %s, got %s", string(data), string(entries[0].Value))
 	}
-
-	err = db.Drop()
-
-	if err != nil {
-		t.Fatalf("Failed to drop database: %v", err)
-	}
 }
 
 func TestGetById(t *testing.T) {
@@ -70,6 +60,7 @@ func TestGetById(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to initialize database: %v", err)
 	}
+	defer db.Drop()
 
 	entryType := "test_type"
 	data := []byte("test_data")
@@ -92,11 +83,6 @@ func TestGetById(t *testing.T) {
 	if string(entry.Value) != string(data) {
 		t.Errorf("Expected entry data %s, got %s", string(data), string(entry.Value))
 	}
-
-	err = db.Drop()
-	if err != nil {
-		t.Fatalf("Failed to drop database: %v", err)
-	}
 }
 
 func TestGetByKey(t *testing.T) {
@@ -106,6 +92,7 @@ func TestGetByKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to initialize database: %v", err)
 	}
+	defer db.Drop()
 
 	entryType := "test_type"
 	data := []byte("test_data")
@@ -129,11 +116,6 @@ func TestGetByKey(t *testing.T) {
 	if string(entry.Value) != string(data) {
 		t.Errorf("Expected entry data %s, got %s", string(data), string(entry.Value))
 	}
-
-	err = db.Drop()
-	if err != nil {
-		t.Fatalf("Failed to drop database: %v", err)
-	}
 }
 
 func TestDelete(t *testing.T) {
@@ -143,6 +125,7 @@ func TestDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to initialize database: %v", err)
 	}
+	defer db.Drop()
 
 	entryType := "test_type"
 	data := []byte("test_data")
@@ -165,12 +148,6 @@ func TestDelete(t *testing.T) {
 	if entry != nil {
 		t.Errorf("Expected nil entry after deletion, got %+v", entry)
 	}
-
-	err = db.Drop()
-	if err != nil {
-		t.Fatalf("Failed to drop database: %v", err)
-	}
-
 }
 
 func TestDeleteByKey(t *testing.T) {
@@ -180,6 +157,7 @@ func TestDeleteByKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to initialize database: %v", err)
 	}
+	defer db.Drop()
 
 	entryType := "test_type"
 	data := []byte("test_data")
@@ -202,11 +180,6 @@ func TestDeleteByKey(t *testing.T) {
 	if entry != nil {
 		t.Errorf("Expected nil entry after deletion, got %+v", entry)
 	}
-
-	err = db.Drop()
-	if err != nil {
-		t.Fatalf("Failed to drop database: %v", err)
-	}
 }
 
 func TestQuery(t *testing.T) {
@@ -216,6 +189,7 @@ func TestQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to initialize database: %v", err)
 	}
+	defer db.Drop()
 
 	type_1 := "type_1"
 	type_2 := "type_2"
@@ -264,9 +238,37 @@ func TestQuery(t *testing.T) {
 	if entries[0].Type != "type_2" || string(entries[0].Value) != "data_2" {
 		t.Errorf("Unexpected entry: %+v", entries[0])
 	}
+}
 
-	err = db.Drop()
+func TestUpdate(t *testing.T) {
+	namespace := []string{"test_namespace"}
+	name := "test_db"
+	db, err := Init(namespace, name)
 	if err != nil {
-		t.Fatalf("Failed to drop database: %v", err)
+		t.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer db.Drop()
+
+	entryType := "test_type"
+	data := []byte("test_data")
+	key := "test_key"
+	_, err = db.Put(EntryInput{Type: entryType, Value: data, Key: key})
+	if err != nil {
+		t.Fatalf("Failed to put entry: %v", err)
+	}
+
+	newData := []byte("updated_data")
+	err = db.Update(EntryInput{Type: entryType, Value: newData, Key: key})
+	if err != nil {
+		t.Fatalf("Failed to update entry: %v", err)
+	}
+
+	entry, err := db.GetByKey(key, entryType)
+	if err != nil {
+		t.Fatalf("Failed to get entry: %v", err)
+	}
+
+	if string(entry.Value) != string(newData) {
+		t.Errorf("Expected entry data %s, got %s", string(newData), string(entry.Value))
 	}
 }
