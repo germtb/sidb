@@ -2,6 +2,7 @@ package sidb
 
 import (
 	"database/sql"
+	"errors"
 	"log"
 	"os"
 	"path"
@@ -13,7 +14,8 @@ import (
 // This package is the Si(mple) DB library.
 
 type Database struct {
-	Path string
+	Path       string
+	connection *sql.DB
 }
 
 type EntryInput struct {
@@ -40,6 +42,8 @@ func RootPath() string {
 	return path.Join(home, ".sidb")
 }
 
+var ErrNoDbConnection = errors.New("no database connection")
+
 func Init(namespace []string, name string) (*Database, error) {
 	dirPath := path.Join(append([]string{RootPath()}, namespace...)...)
 	dbPath := path.Join(dirPath, name+".db")
@@ -49,13 +53,11 @@ func Init(namespace []string, name string) (*Database, error) {
 		return nil, err
 	}
 
-	sqliteDb, err := sql.Open("sqlite3", dbPath)
+	connection, err := sql.Open("sqlite3", dbPath)
 
 	if err != nil {
 		return nil, err
 	}
-
-	defer sqliteDb.Close()
 
 	createTableSQL := `CREATE TABLE IF NOT EXISTS entries (
 		"id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
@@ -71,29 +73,53 @@ func Init(namespace []string, name string) (*Database, error) {
 		CREATE INDEX IF NOT EXISTS idx_entries_type_key ON entries(type, key);
 	`
 
-	_, err = sqliteDb.Exec(createTableSQL)
+	_, err = connection.Exec(createTableSQL)
 
 	if err != nil {
+		connection.Close()
 		return nil, err
 	}
 
-	database := &Database{Path: dbPath}
+	database := &Database{Path: dbPath, connection: connection}
 
 	return database, nil
 }
 
-func (db *Database) Get(id int64) (*DbEntry, error) {
-	database, err := sql.Open("sqlite3", db.Path)
-
-	if err != nil {
-		return nil, err
+func (db *Database) Close() error {
+	if db.connection == nil {
+		return nil
 	}
-	defer database.Close()
 
-	row := database.QueryRow("SELECT id, timestamp, type, value, key FROM entries WHERE id = ?", id)
+	err := db.connection.Close()
+	if err != nil {
+		return err
+	}
+	db.connection = nil
+	return nil
+}
+
+func (db *Database) Open() error {
+	if db.connection != nil {
+		return nil
+	}
+
+	conn, err := sql.Open("sqlite3", db.Path)
+	if err != nil {
+		return err
+	}
+	db.connection = conn
+	return nil
+}
+
+func (db *Database) Get(id int64) (*DbEntry, error) {
+	if db.connection == nil {
+		return nil, ErrNoDbConnection
+	}
+
+	row := db.connection.QueryRow("SELECT id, timestamp, type, value, key FROM entries WHERE id = ?", id)
 
 	var entry DbEntry
-	err = row.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Value, &entry.Key)
+	err := row.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Value, &entry.Key)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil // No entry found
@@ -106,17 +132,13 @@ func (db *Database) Get(id int64) (*DbEntry, error) {
 }
 
 func (db *Database) GetByKey(key string, entryType string) (*DbEntry, error) {
-	database, err := sql.Open("sqlite3", db.Path)
-
-	if err != nil {
-		return nil, err
+	if db.connection == nil {
+		return nil, ErrNoDbConnection
 	}
 
-	defer database.Close()
-
-	row := database.QueryRow("SELECT id, timestamp, type, value, key FROM entries WHERE key = ? AND type = ?", key, entryType)
+	row := db.connection.QueryRow("SELECT id, timestamp, type, value, key FROM entries WHERE key = ? AND type = ?", key, entryType)
 	var entry DbEntry
-	err = row.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Value, &entry.Key)
+	err := row.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Value, &entry.Key)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil // No entry found
@@ -128,14 +150,11 @@ func (db *Database) GetByKey(key string, entryType string) (*DbEntry, error) {
 }
 
 func (db *Database) Put(entry EntryInput) (int64, error) {
-	database, err := sql.Open("sqlite3", db.Path)
-	if err != nil {
-		return 0, err
+	if db.connection == nil {
+		return 0, ErrNoDbConnection
 	}
 
-	defer database.Close()
-
-	stmt, err := database.Prepare("INSERT INTO entries(type, value, timestamp, key) VALUES(?, ?, ?, ?)")
+	stmt, err := db.connection.Prepare("INSERT INTO entries(type, value, timestamp, key) VALUES(?, ?, ?, ?)")
 	if err != nil {
 		return 0, err
 	}
@@ -155,13 +174,11 @@ func (db *Database) Put(entry EntryInput) (int64, error) {
 }
 
 func (db *Database) Update(entry EntryInput) error {
-	database, err := sql.Open("sqlite3", db.Path)
-	if err != nil {
-		return err
+	if db.connection == nil {
+		return ErrNoDbConnection
 	}
-	defer database.Close()
 
-	stmt, err := database.Prepare("UPDATE entries SET value = ? WHERE key = ? AND type = ?")
+	stmt, err := db.connection.Prepare("UPDATE entries SET value = ? WHERE key = ? AND type = ?")
 	if err != nil {
 		return err
 	}
@@ -173,13 +190,11 @@ func (db *Database) Update(entry EntryInput) error {
 }
 
 func (db *Database) Delete(id int64) error {
-	database, err := sql.Open("sqlite3", db.Path)
-	if err != nil {
-		return err
+	if db.connection == nil {
+		return ErrNoDbConnection
 	}
-	defer database.Close()
 
-	stmt, err := database.Prepare("DELETE FROM entries WHERE id = ?")
+	stmt, err := db.connection.Prepare("DELETE FROM entries WHERE id = ?")
 	if err != nil {
 		return err
 	}
@@ -195,13 +210,11 @@ func (db *Database) Delete(id int64) error {
 }
 
 func (db *Database) DeleteByKey(key string, entryType string) error {
-	database, err := sql.Open("sqlite3", db.Path)
-	if err != nil {
-		return err
+	if db.connection == nil {
+		return ErrNoDbConnection
 	}
-	defer database.Close()
 
-	stmt, err := database.Prepare("DELETE FROM entries WHERE key = ? AND type = ?")
+	stmt, err := db.connection.Prepare("DELETE FROM entries WHERE key = ? AND type = ?")
 	if err != nil {
 		return err
 	}
@@ -214,13 +227,11 @@ func (db *Database) DeleteByKey(key string, entryType string) error {
 }
 
 func (db *Database) BulkPutForget(entries []EntryInput) error {
-	database, err := sql.Open("sqlite3", db.Path)
-	if err != nil {
-		return err
+	if db.connection == nil {
+		return ErrNoDbConnection
 	}
-	defer database.Close()
 
-	tx, err := database.Begin()
+	tx, err := db.connection.Begin()
 	if err != nil {
 		return err
 	}
@@ -249,13 +260,11 @@ func (db *Database) BulkPutForget(entries []EntryInput) error {
 }
 
 func (db *Database) BulkLoad(limit int) ([]DbEntry, error) {
-	database, err := sql.Open("sqlite3", db.Path)
-	if err != nil {
-		return nil, err
+	if db.connection == nil {
+		return nil, ErrNoDbConnection
 	}
-	defer database.Close()
 
-	rows, err := database.Query("SELECT id, timestamp, type, value, key FROM entries ORDER BY timestamp DESC LIMIT ?", limit)
+	rows, err := db.connection.Query("SELECT id, timestamp, type, value, key FROM entries ORDER BY timestamp DESC LIMIT ?", limit)
 	if err != nil {
 		return nil, err
 	}
@@ -277,6 +286,10 @@ func (db *Database) BulkLoad(limit int) ([]DbEntry, error) {
 }
 
 func (db *Database) Count() (int64, error) {
+	if db.connection == nil {
+		return 0, ErrNoDbConnection
+	}
+
 	database, err := sql.Open("sqlite3", db.Path)
 	if err != nil {
 		return 0, err
@@ -306,11 +319,9 @@ type QueryParams struct {
 func (db *Database) Query(
 	params QueryParams,
 ) ([]DbEntry, error) {
-	database, err := sql.Open("sqlite3", db.Path)
-	if err != nil {
-		return nil, err
+	if db.connection == nil {
+		return nil, ErrNoDbConnection
 	}
-	defer database.Close()
 
 	query := "SELECT id, timestamp, type, value, key FROM entries WHERE 1=1"
 
@@ -342,7 +353,7 @@ func (db *Database) Query(
 		args = append(args, *params.Limit)
 	}
 
-	rows, err := database.Query(query, args...)
+	rows, err := db.connection.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -365,6 +376,7 @@ func (db *Database) Query(
 }
 
 func (db *Database) Drop() error {
+	db.Close()
 	if err := os.Remove(db.Path); err != nil {
 		return err
 	}
