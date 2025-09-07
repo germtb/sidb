@@ -292,28 +292,3 @@ func TestClose(t *testing.T) {
 		t.Fatalf("Expected error when using closed database, got nil")
 	}
 }
-
-func TestReopen(t *testing.T) {
-	namespace := []string{"test_namespace"}
-	name := "test_db"
-	db, err := Init(namespace, name)
-	if err != nil {
-		t.Fatalf("Failed to initialize database: %v", err)
-	}
-
-	err = db.Close()
-	if err != nil {
-		t.Fatalf("Failed to close database: %v", err)
-	}
-	err = db.Open()
-
-	if err != nil {
-		t.Fatalf("Failed to reopen database: %v", err)
-	}
-
-	// Now the database should be usable again
-	_, err = db.BulkLoad(10)
-	if err != nil {
-		t.Fatalf("Failed to use reopened database: %v", err)
-	}
-}

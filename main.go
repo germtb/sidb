@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"sync"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -16,6 +17,7 @@ import (
 type Database struct {
 	Path       string
 	connection *sql.DB
+	mutex      sync.RWMutex
 }
 
 type EntryInput struct {
@@ -80,12 +82,17 @@ func Init(namespace []string, name string) (*Database, error) {
 		return nil, err
 	}
 
-	database := &Database{Path: dbPath, connection: connection}
+	mutex := sync.RWMutex{}
+
+	database := &Database{Path: dbPath, connection: connection, mutex: mutex}
 
 	return database, nil
 }
 
 func (db *Database) Close() error {
+	db.mutex.Lock()
+	defer db.mutex.Unlock()
+
 	if db.connection == nil {
 		return nil
 	}
@@ -98,20 +105,10 @@ func (db *Database) Close() error {
 	return nil
 }
 
-func (db *Database) Open() error {
-	if db.connection != nil {
-		return nil
-	}
-
-	conn, err := sql.Open("sqlite3", db.Path)
-	if err != nil {
-		return err
-	}
-	db.connection = conn
-	return nil
-}
-
 func (db *Database) Get(id int64) (*DbEntry, error) {
+	db.mutex.RLock()
+	defer db.mutex.RUnlock()
+
 	if db.connection == nil {
 		return nil, ErrNoDbConnection
 	}
@@ -132,6 +129,9 @@ func (db *Database) Get(id int64) (*DbEntry, error) {
 }
 
 func (db *Database) GetByKey(key string, entryType string) (*DbEntry, error) {
+	db.mutex.RLock()
+	defer db.mutex.RUnlock()
+
 	if db.connection == nil {
 		return nil, ErrNoDbConnection
 	}
@@ -150,11 +150,14 @@ func (db *Database) GetByKey(key string, entryType string) (*DbEntry, error) {
 }
 
 func (db *Database) Put(entry EntryInput) (int64, error) {
+	db.mutex.Lock()
+	defer db.mutex.Unlock()
+
 	if db.connection == nil {
 		return 0, ErrNoDbConnection
 	}
 
-	stmt, err := db.connection.Prepare("INSERT INTO entries(type, value, timestamp, key) VALUES(?, ?, ?, ?)")
+	stmt, err := db.connection.Prepare("INSERT OR REPLACE INTO entries(type, value, timestamp, key) VALUES(?, ?, ?, ?)")
 	if err != nil {
 		return 0, err
 	}
@@ -174,6 +177,9 @@ func (db *Database) Put(entry EntryInput) (int64, error) {
 }
 
 func (db *Database) Update(entry EntryInput) error {
+	db.mutex.Lock()
+	defer db.mutex.Unlock()
+
 	if db.connection == nil {
 		return ErrNoDbConnection
 	}
@@ -190,6 +196,9 @@ func (db *Database) Update(entry EntryInput) error {
 }
 
 func (db *Database) Delete(id int64) error {
+	db.mutex.Lock()
+	defer db.mutex.Unlock()
+
 	if db.connection == nil {
 		return ErrNoDbConnection
 	}
@@ -210,6 +219,9 @@ func (db *Database) Delete(id int64) error {
 }
 
 func (db *Database) DeleteByKey(key string, entryType string) error {
+	db.mutex.Lock()
+	defer db.mutex.Unlock()
+
 	if db.connection == nil {
 		return ErrNoDbConnection
 	}
@@ -227,6 +239,9 @@ func (db *Database) DeleteByKey(key string, entryType string) error {
 }
 
 func (db *Database) BulkPutForget(entries []EntryInput) error {
+	db.mutex.Lock()
+	defer db.mutex.Unlock()
+
 	if db.connection == nil {
 		return ErrNoDbConnection
 	}
@@ -260,6 +275,9 @@ func (db *Database) BulkPutForget(entries []EntryInput) error {
 }
 
 func (db *Database) BulkLoad(limit int) ([]DbEntry, error) {
+	db.mutex.RLock()
+	defer db.mutex.RUnlock()
+
 	if db.connection == nil {
 		return nil, ErrNoDbConnection
 	}
@@ -286,21 +304,17 @@ func (db *Database) BulkLoad(limit int) ([]DbEntry, error) {
 }
 
 func (db *Database) Count() (int64, error) {
+	db.mutex.RLock()
+	defer db.mutex.RUnlock()
+
 	if db.connection == nil {
 		return 0, ErrNoDbConnection
 	}
 
-	database, err := sql.Open("sqlite3", db.Path)
-	if err != nil {
-		return 0, err
-	}
-
-	defer database.Close()
-
-	row := database.QueryRow("SELECT COUNT(*) FROM entries")
+	row := db.connection.QueryRow("SELECT COUNT(*) FROM entries")
 
 	var count int64
-	err = row.Scan(&count)
+	err := row.Scan(&count)
 	if err != nil {
 		return 0, err
 	}
@@ -319,6 +333,9 @@ type QueryParams struct {
 func (db *Database) Query(
 	params QueryParams,
 ) ([]DbEntry, error) {
+	db.mutex.RLock()
+	defer db.mutex.RUnlock()
+
 	if db.connection == nil {
 		return nil, ErrNoDbConnection
 	}
@@ -377,6 +394,10 @@ func (db *Database) Query(
 
 func (db *Database) Drop() error {
 	db.Close()
+
+	db.mutex.Lock()
+	defer db.mutex.Unlock()
+
 	if err := os.Remove(db.Path); err != nil {
 		return err
 	}
