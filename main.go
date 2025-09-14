@@ -152,7 +152,7 @@ func (db *Database) GetByKey(key string, entryType string) (*DbEntry, error) {
 	return &entry, nil
 }
 
-func (db *Database) GetByGrouping(grouping string) ([]DbEntry, error) {
+func (db *Database) GetByGrouping(grouping string, entryType string) ([]DbEntry, error) {
 	db.mutex.RLock()
 	defer db.mutex.RUnlock()
 
@@ -160,7 +160,7 @@ func (db *Database) GetByGrouping(grouping string) ([]DbEntry, error) {
 		return nil, ErrNoDbConnection
 	}
 
-	rows, err := db.connection.Query("SELECT id, timestamp, type, value, key, grouping FROM entries WHERE grouping = ?", grouping)
+	rows, err := db.connection.Query("SELECT id, timestamp, type, value, key, grouping FROM entries WHERE grouping = ? AND type = ?", grouping, entryType)
 	if err != nil {
 		return nil, err
 	}

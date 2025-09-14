@@ -317,7 +317,7 @@ func TestGetByGrouping(t *testing.T) {
 		t.Fatalf("Failed to put entry 2: %v", err)
 	}
 
-	entries, err := db.GetByGrouping(grouping)
+	entries, err := db.GetByGrouping(grouping, entryType)
 	if err != nil {
 		t.Fatalf("Failed to get entries by grouping: %v", err)
 	}
