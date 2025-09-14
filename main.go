@@ -21,9 +21,10 @@ type Database struct {
 }
 
 type EntryInput struct {
-	Type  string
-	Key   string
-	Value []byte
+	Type     string
+	Key      string
+	Value    []byte
+	Grouping string
 }
 
 type DbEntry struct {
@@ -32,6 +33,7 @@ type DbEntry struct {
 	Type      string
 	Key       string
 	Value     []byte
+	Grouping  string
 }
 
 func RootPath() string {
@@ -67,12 +69,15 @@ func Init(namespace []string, name string) (*Database, error) {
 		"type" VARCHAR(255),
 		"value" BLOB,
 		"key" VARCHAR(255) NOT NULL,
+		"grouping" VARCHAR(255),
 		UNIQUE("type", "key")
 	);
 
 		CREATE INDEX IF NOT EXISTS idx_entries_timestamp ON entries(timestamp);
 		CREATE INDEX IF NOT EXISTS idx_entries_type ON entries(type);
 		CREATE INDEX IF NOT EXISTS idx_entries_type_key ON entries(type, key);
+		CREATE INDEX IF NOT EXISTS idx_entries_key ON entries(key);
+		CREATE INDEX IF NOT EXISTS idx_entries_grouping ON entries(grouping);
 	`
 
 	_, err = connection.Exec(createTableSQL)
@@ -82,9 +87,7 @@ func Init(namespace []string, name string) (*Database, error) {
 		return nil, err
 	}
 
-	mutex := sync.RWMutex{}
-
-	database := &Database{Path: dbPath, connection: connection, mutex: mutex}
+	database := &Database{Path: dbPath, connection: connection, mutex: sync.RWMutex{}}
 
 	return database, nil
 }
@@ -113,10 +116,10 @@ func (db *Database) Get(id int64) (*DbEntry, error) {
 		return nil, ErrNoDbConnection
 	}
 
-	row := db.connection.QueryRow("SELECT id, timestamp, type, value, key FROM entries WHERE id = ?", id)
+	row := db.connection.QueryRow("SELECT id, timestamp, type, value, key, grouping FROM entries WHERE id = ?", id)
 
 	var entry DbEntry
-	err := row.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Value, &entry.Key)
+	err := row.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Value, &entry.Key, &entry.Grouping)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil // No entry found
@@ -136,9 +139,9 @@ func (db *Database) GetByKey(key string, entryType string) (*DbEntry, error) {
 		return nil, ErrNoDbConnection
 	}
 
-	row := db.connection.QueryRow("SELECT id, timestamp, type, value, key FROM entries WHERE key = ? AND type = ?", key, entryType)
+	row := db.connection.QueryRow("SELECT id, timestamp, type, value, key, grouping FROM entries WHERE key = ? AND type = ?", key, entryType)
 	var entry DbEntry
-	err := row.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Value, &entry.Key)
+	err := row.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Value, &entry.Key, &entry.Grouping)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil // No entry found
@@ -149,7 +152,36 @@ func (db *Database) GetByKey(key string, entryType string) (*DbEntry, error) {
 	return &entry, nil
 }
 
-func (db *Database) Put(entry EntryInput) (int64, error) {
+func (db *Database) GetByGrouping(grouping string) ([]DbEntry, error) {
+	db.mutex.RLock()
+	defer db.mutex.RUnlock()
+
+	if db.connection == nil {
+		return nil, ErrNoDbConnection
+	}
+
+	rows, err := db.connection.Query("SELECT id, timestamp, type, value, key, grouping FROM entries WHERE grouping = ?", grouping)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []DbEntry
+	for rows.Next() {
+		var entry DbEntry
+		if err := rows.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Value, &entry.Key, &entry.Grouping); err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
+func (db *Database) Upsert(entry EntryInput) (int64, error) {
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
 
@@ -157,13 +189,13 @@ func (db *Database) Put(entry EntryInput) (int64, error) {
 		return 0, ErrNoDbConnection
 	}
 
-	stmt, err := db.connection.Prepare("INSERT OR REPLACE INTO entries(type, value, timestamp, key) VALUES(?, ?, ?, ?)")
+	stmt, err := db.connection.Prepare("INSERT OR REPLACE INTO entries(type, value, timestamp, key, grouping) VALUES(?, ?, ?, ?, ?)")
 	if err != nil {
 		return 0, err
 	}
 	defer stmt.Close()
 
-	result, err := stmt.Exec(entry.Type, entry.Value, time.Now().UnixMilli(), entry.Key)
+	result, err := stmt.Exec(entry.Type, entry.Value, time.Now().UnixMilli(), entry.Key, entry.Grouping)
 	if err != nil {
 		return 0, err
 	}
@@ -174,6 +206,15 @@ func (db *Database) Put(entry EntryInput) (int64, error) {
 	}
 
 	return id, nil
+}
+
+func (db *Database) UpsertReturning(entry EntryInput) (*DbEntry, error) {
+	id, err := db.Upsert(entry)
+	if err != nil {
+		return nil, err
+	}
+
+	return db.Get(id)
 }
 
 func (db *Database) Update(entry EntryInput) error {
@@ -251,7 +292,7 @@ func (db *Database) BulkPutForget(entries []EntryInput) error {
 		return err
 	}
 
-	stmt, err := tx.Prepare("INSERT INTO entries(type, value, timestamp, key) VALUES(?, ?, ?, ?)")
+	stmt, err := tx.Prepare("INSERT INTO entries(type, value, timestamp, key, grouping) VALUES(?, ?, ?, ?, ?)")
 	if err != nil {
 		tx.Rollback()
 		return err
@@ -259,7 +300,7 @@ func (db *Database) BulkPutForget(entries []EntryInput) error {
 	defer stmt.Close()
 
 	for _, e := range entries {
-		if _, err := stmt.Exec(e.Type, e.Value, time.Now().UnixMilli(), e.Key); err != nil {
+		if _, err := stmt.Exec(e.Type, e.Value, time.Now().UnixMilli(), e.Key, e.Grouping); err != nil {
 			tx.Rollback()
 			return err
 		}
@@ -282,7 +323,7 @@ func (db *Database) BulkLoad(limit int) ([]DbEntry, error) {
 		return nil, ErrNoDbConnection
 	}
 
-	rows, err := db.connection.Query("SELECT id, timestamp, type, value, key FROM entries ORDER BY timestamp DESC LIMIT ?", limit)
+	rows, err := db.connection.Query("SELECT id, timestamp, type, value, key, grouping FROM entries ORDER BY timestamp DESC LIMIT ?", limit)
 	if err != nil {
 		return nil, err
 	}
@@ -291,7 +332,7 @@ func (db *Database) BulkLoad(limit int) ([]DbEntry, error) {
 	var entries []DbEntry
 	for rows.Next() {
 		var entry DbEntry
-		if err := rows.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Value, &entry.Key); err != nil {
+		if err := rows.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Value, &entry.Key, &entry.Grouping); err != nil {
 			return nil, err
 		}
 		entries = append(entries, entry)
@@ -340,7 +381,7 @@ func (db *Database) Query(
 		return nil, ErrNoDbConnection
 	}
 
-	query := "SELECT id, timestamp, type, value, key FROM entries WHERE 1=1"
+	query := "SELECT id, timestamp, type, value, key, grouping FROM entries WHERE 1=1"
 
 	var args []interface{}
 
@@ -379,7 +420,7 @@ func (db *Database) Query(
 	var entries []DbEntry
 	for rows.Next() {
 		var entry DbEntry
-		if err := rows.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Value, &entry.Key); err != nil {
+		if err := rows.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Value, &entry.Key, &entry.Grouping); err != nil {
 			return nil, err
 		}
 		entries = append(entries, entry)

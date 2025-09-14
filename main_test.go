@@ -31,7 +31,7 @@ func TestBulkPutForget(t *testing.T) {
 
 	entryType := "test_type"
 	data := []byte("test_data")
-	err = db.BulkPutForget([]EntryInput{{Type: entryType, Value: data, Key: "test_key"}})
+	err = db.BulkPutForget([]EntryInput{{Type: entryType, Value: data, Key: "test_key", Grouping: ""}})
 	if err != nil {
 		t.Fatalf("Failed to put entry: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestGetById(t *testing.T) {
 
 	entryType := "test_type"
 	data := []byte("test_data")
-	id, err := db.Put(EntryInput{Type: entryType, Value: data, Key: "test_key"})
+	id, err := db.Upsert(EntryInput{Type: entryType, Value: data, Key: "test_key", Grouping: ""})
 	if err != nil {
 		t.Fatalf("Failed to put entry: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestGetByKey(t *testing.T) {
 	entryType := "test_type"
 	data := []byte("test_data")
 	key := "test_key"
-	_, err = db.Put(EntryInput{Type: entryType, Value: data, Key: key})
+	_, err = db.Upsert(EntryInput{Type: entryType, Value: data, Key: key, Grouping: ""})
 	if err != nil {
 		t.Fatalf("Failed to put entry: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestDelete(t *testing.T) {
 
 	entryType := "test_type"
 	data := []byte("test_data")
-	id, err := db.Put(EntryInput{Type: entryType, Value: data, Key: "test_key"})
+	id, err := db.Upsert(EntryInput{Type: entryType, Value: data, Key: "test_key", Grouping: ""})
 	if err != nil {
 		t.Fatalf("Failed to put entry: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestDeleteByKey(t *testing.T) {
 	entryType := "test_type"
 	data := []byte("test_data")
 	key := "test_key"
-	_, err = db.Put(EntryInput{Type: entryType, Value: data, Key: key})
+	_, err = db.Upsert(EntryInput{Type: entryType, Value: data, Key: key, Grouping: ""})
 	if err != nil {
 		t.Fatalf("Failed to put entry: %v", err)
 	}
@@ -195,9 +195,9 @@ func TestQuery(t *testing.T) {
 	type_2 := "type_2"
 
 	err = db.BulkPutForget([]EntryInput{
-		{Type: type_1, Value: []byte("data_1"), Key: "key_1"},
-		{Type: type_2, Value: []byte("data_2"), Key: "key_2"},
-		{Type: type_1, Value: []byte("data_3"), Key: "key_3"},
+		{Type: type_1, Value: []byte("data_1"), Key: "key_1", Grouping: ""},
+		{Type: type_2, Value: []byte("data_2"), Key: "key_2", Grouping: ""},
+		{Type: type_1, Value: []byte("data_3"), Key: "key_3", Grouping: ""},
 	})
 
 	if err != nil {
@@ -252,13 +252,13 @@ func TestUpdate(t *testing.T) {
 	entryType := "test_type"
 	data := []byte("test_data")
 	key := "test_key"
-	_, err = db.Put(EntryInput{Type: entryType, Value: data, Key: key})
+	_, err = db.Upsert(EntryInput{Type: entryType, Value: data, Key: key, Grouping: ""})
 	if err != nil {
 		t.Fatalf("Failed to put entry: %v", err)
 	}
 
 	newData := []byte("updated_data")
-	err = db.Update(EntryInput{Type: entryType, Value: newData, Key: key})
+	err = db.Update(EntryInput{Type: entryType, Value: newData, Key: key, Grouping: ""})
 	if err != nil {
 		t.Fatalf("Failed to update entry: %v", err)
 	}
@@ -290,5 +290,46 @@ func TestClose(t *testing.T) {
 	_, err = db.BulkLoad(10)
 	if err == nil {
 		t.Fatalf("Expected error when using closed database, got nil")
+	}
+}
+
+func TestGetByGrouping(t *testing.T) {
+	namespace := []string{"test_namespace"}
+	name := "test_db"
+	db, err := Init(namespace, name)
+	if err != nil {
+		t.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer db.Drop()
+
+	entryType := "test_type"
+	grouping := "test_group"
+	data1 := []byte("test_data_1")
+	data2 := []byte("test_data_2")
+
+	_, err = db.Upsert(EntryInput{Type: entryType, Value: data1, Key: "test_key_1", Grouping: grouping})
+	if err != nil {
+		t.Fatalf("Failed to put entry 1: %v", err)
+	}
+
+	_, err = db.Upsert(EntryInput{Type: entryType, Value: data2, Key: "test_key_2", Grouping: grouping})
+	if err != nil {
+		t.Fatalf("Failed to put entry 2: %v", err)
+	}
+
+	entries, err := db.GetByGrouping(grouping)
+	if err != nil {
+		t.Fatalf("Failed to get entries by grouping: %v", err)
+	}
+
+	if len(entries) != 2 {
+		t.Fatalf("Expected 2 entries, got %d", len(entries))
+	}
+
+	if entries[0].Type != entryType || string(entries[0].Value) != string(data1) {
+		t.Errorf("Unexpected entry: %+v", entries[0])
+	}
+	if entries[1].Type != entryType || string(entries[1].Value) != string(data2) {
+		t.Errorf("Unexpected entry: %+v", entries[1])
 	}
 }
