@@ -370,3 +370,48 @@ func TestDeleteByGrouping(t *testing.T) {
 		t.Fatalf("Expected 0 entries after deletion, got %d", len(entries))
 	}
 }
+
+func TestBulkGetByKey(t *testing.T) {
+	namespace := []string{"test_namespace"}
+	name := "test_db"
+	db, err := Init(namespace, name)
+	if err != nil {
+		t.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer db.Drop()
+
+	entryType := "test_type"
+	data1 := []byte("test_data_1")
+	data2 := []byte("test_data_2")
+	key1 := "test_key_1"
+	key2 := "test_key_2"
+	nonExistentKey := "non_existent_key"
+
+	_, err = db.Upsert(EntryInput{Type: entryType, Value: data1, Key: key1, Grouping: ""})
+	if err != nil {
+		t.Fatalf("Failed to put entry 1: %v", err)
+	}
+	_, err = db.Upsert(EntryInput{Type: entryType, Value: data2, Key: key2, Grouping: ""})
+	if err != nil {
+		t.Fatalf("Failed to put entry 2: %v", err)
+	}
+
+	keys := []string{key1, key2, nonExistentKey}
+	entries, err := db.BulkGetByKey(keys, entryType)
+	if err != nil {
+		t.Fatalf("Failed to bulk get entries by keys: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("Expected 2 entries, got %d", len(entries))
+	}
+
+	if entry, exists := entries[key1]; !exists || entry.Type != entryType || string(entry.Value) != string(data1) {
+		t.Errorf("Unexpected or missing entry for key1: %+v", entry)
+	}
+	if entry, exists := entries[key2]; !exists || entry.Type != entryType || string(entry.Value) != string(data2) {
+		t.Errorf("Unexpected or missing entry for key2: %+v", entry)
+	}
+	if _, exists := entries[nonExistentKey]; exists {
+		t.Errorf("Expected no entry for non-existent key, but found one")
+	}
+}

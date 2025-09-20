@@ -3,9 +3,11 @@ package sidb
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"path"
+	"strings"
 	"sync"
 	"time"
 
@@ -150,6 +152,50 @@ func (db *Database) GetByKey(key string, entryType string) (*DbEntry, error) {
 	}
 
 	return &entry, nil
+}
+
+func (db *Database) BulkGetByKey(keys []string, entryType string) (map[string]DbEntry, error) {
+	db.mutex.RLock()
+	defer db.mutex.RUnlock()
+
+	if db.connection == nil {
+		return nil, ErrNoDbConnection
+	}
+
+	if len(keys) == 0 {
+		return make(map[string]DbEntry), nil
+	}
+	placeholders := strings.Repeat("?,", len(keys))
+	placeholders = placeholders[:len(placeholders)-1] // Remove trailing comma
+
+	query := fmt.Sprintf("SELECT id, timestamp, type, value, key, grouping FROM entries WHERE key IN (%s) AND type = ?", placeholders)
+
+	args := make([]interface{}, len(keys)+1)
+	for i, key := range keys {
+		args[i] = key
+	}
+	args[len(keys)] = entryType
+
+	rows, err := db.connection.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	entries := make(map[string]DbEntry)
+
+	for rows.Next() {
+		var entry DbEntry
+		if err := rows.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Value, &entry.Key, &entry.Grouping); err != nil {
+			return nil, err
+		}
+		entries[entry.Key] = entry
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return entries, nil
 }
 
 func (db *Database) GetByGrouping(grouping string, entryType string) ([]DbEntry, error) {
