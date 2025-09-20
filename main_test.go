@@ -333,3 +333,40 @@ func TestGetByGrouping(t *testing.T) {
 		t.Errorf("Unexpected entry: %+v", entries[1])
 	}
 }
+
+func TestDeleteByGrouping(t *testing.T) {
+	namespace := []string{"test_namespace"}
+	name := "test_db"
+	db, err := Init(namespace, name)
+	if err != nil {
+		t.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer db.Drop()
+
+	entryType := "test_type"
+	grouping := "test_group"
+	data1 := []byte("test_data_1")
+	data2 := []byte("test_data_2")
+	_, err = db.Upsert(EntryInput{Type: entryType, Value: data1, Key: "test_key_1", Grouping: grouping})
+	if err != nil {
+		t.Fatalf("Failed to put entry 1: %v", err)
+	}
+	_, err = db.Upsert(EntryInput{Type: entryType, Value: data2, Key: "test_key_2", Grouping: grouping})
+	if err != nil {
+		t.Fatalf("Failed to put entry 2: %v", err)
+	}
+
+	err = db.DeleteByGrouping(grouping, entryType)
+	if err != nil {
+		t.Fatalf("Failed to delete entries by grouping: %v", err)
+	}
+
+	entries, err := db.GetByGrouping(grouping, entryType)
+	if err != nil {
+		t.Fatalf("Failed to get entries by grouping: %v", err)
+	}
+
+	if len(entries) != 0 {
+		t.Fatalf("Expected 0 entries after deletion, got %d", len(entries))
+	}
+}

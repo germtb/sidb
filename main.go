@@ -279,6 +279,27 @@ func (db *Database) DeleteByKey(key string, entryType string) error {
 	return nil
 }
 
+func (db *Database) DeleteByGrouping(grouping string, entryType string) error {
+	db.mutex.Lock()
+	defer db.mutex.Unlock()
+
+	if db.connection == nil {
+		return ErrNoDbConnection
+	}
+
+	stmt, err := db.connection.Prepare("DELETE FROM entries WHERE grouping = ? AND type = ?")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	_, err = stmt.Exec(grouping, entryType)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (db *Database) BulkPutForget(entries []EntryInput) error {
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
