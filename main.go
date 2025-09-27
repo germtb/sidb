@@ -435,7 +435,9 @@ type QueryParams struct {
 	To         *int64
 	Type       *string
 	Limit      *int
+	Offset     *int
 	Descending bool
+	Grouping   *string
 }
 
 func (db *Database) Query(
@@ -476,6 +478,16 @@ func (db *Database) Query(
 	if params.Limit != nil {
 		query += " LIMIT ?"
 		args = append(args, *params.Limit)
+	}
+
+	if params.Offset != nil {
+		query += " OFFSET ?"
+		args = append(args, *params.Offset)
+	}
+
+	if params.Grouping != nil {
+		query += " AND grouping = ?"
+		args = append(args, *params.Grouping)
 	}
 
 	rows, err := db.connection.Query(query, args...)

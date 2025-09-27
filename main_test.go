@@ -240,6 +240,49 @@ func TestQuery(t *testing.T) {
 	}
 }
 
+func TestQueryWithLimitOffset(t *testing.T) {
+	namespace := []string{"test_namespace"}
+	name := "test_db"
+	db, err := Init(namespace, name)
+	if err != nil {
+		t.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer db.Drop()
+
+	type_1 := "type_1"
+	err = db.BulkPutForget([]EntryInput{
+		{Type: type_1, Value: []byte("data_1"), Key: "key_1"},
+		{Type: type_1, Value: []byte("data_2"), Key: "key_2"},
+		{Type: type_1, Value: []byte("data_3"), Key: "key_3"},
+		{Type: type_1, Value: []byte("data_4"), Key: "key_4"},
+	})
+	if err != nil {
+		t.Fatalf("Failed to put entries: %v", err)
+	}
+
+	limit := 2
+	offset := 1
+	entries, err := db.Query(QueryParams{
+		Type:   &type_1,
+		Limit:  &limit,
+		Offset: &offset,
+	})
+	if err != nil {
+		t.Fatalf("Failed to query entries: %v", err)
+	}
+
+	if len(entries) != 2 {
+		t.Fatalf("Expected 2 entries, got %d", len(entries))
+	}
+
+	if entries[0].Type != "type_1" || string(entries[0].Value) != "data_2" {
+		t.Errorf("Unexpected entry: %+v", entries[0])
+	}
+	if entries[1].Type != "type_1" || string(entries[1].Value) != "data_3" {
+		t.Errorf("Unexpected entry: %+v", entries[1])
+	}
+}
+
 func TestUpdate(t *testing.T) {
 	namespace := []string{"test_namespace"}
 	name := "test_db"
