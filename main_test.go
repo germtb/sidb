@@ -582,11 +582,8 @@ func TestStoreUpsertGetDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get: %v", err)
 	}
-	if got == nil {
-		t.Fatalf("Expected item, got nil")
-	}
 	if got.Name != item.Name || got.Value != item.Value {
-		t.Errorf("Expected %+v, got %+v", item, *got)
+		t.Errorf("Expected %+v, got %+v", item, got)
 	}
 
 	// --- Update ---
@@ -611,9 +608,6 @@ func TestStoreUpsertGetDelete(t *testing.T) {
 	got, err = store.Get("key_1")
 	if err != nil {
 		t.Fatalf("Get after delete returned error: %v", err)
-	}
-	if got != nil {
-		t.Errorf("Expected nil after delete, got %+v", got)
 	}
 }
 
@@ -668,7 +662,7 @@ func TestStoreSerializationError(t *testing.T) {
 		return nil, fmt.Errorf("serialization failed intentionally")
 	}
 
-	store := MakeStore[testItem](db, "bad_store", badSerializer, deserializeTestItem)
+	store := MakeStore(db, "bad_store", badSerializer, deserializeTestItem)
 	input := StoreEntryInput[testItem]{Key: "k", Value: testItem{Name: "bad"}}
 
 	err = store.Upsert(input)

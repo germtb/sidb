@@ -473,16 +473,13 @@ type Store[T any] struct {
 	deserialize func([]byte) (T, error)
 }
 
-func (store *Store[T]) Get(key string) (*T, error) {
+func (store *Store[T]) Get(key string) (T, error) {
 	entry, err := store.db.Get(store.entryType, key)
 	if err != nil || entry == nil {
-		return nil, err
+		var zero T
+		return zero, err
 	}
-	value, err := store.deserialize(entry.Value)
-	if err != nil {
-		return nil, err
-	}
-	return &value, nil
+	return store.deserialize(entry.Value)
 }
 
 func (store *Store[T]) BulkGet(keys []string) (map[string]T, error) {
@@ -609,17 +606,21 @@ func (store *Store[T]) Query(params StoreQueryParams) ([]T, error) {
 	return results, nil
 }
 
-func (s *Store[T]) QueryEntries(params StoreQueryParams) ([]DbEntry, error) {
-	return s.db.Query(QueryParams{
+func (store *Store[T]) QueryEntries(params StoreQueryParams) ([]DbEntry, error) {
+	return store.db.Query(QueryParams{
 		From:      params.From,
 		To:        params.To,
-		Type:      &s.entryType,
+		Type:      &store.entryType,
 		Limit:     params.Limit,
 		Offset:    params.Offset,
 		Grouping:  params.Grouping,
 		SortField: params.SortField,
 		SortOrder: params.SortOrder,
 	})
+}
+
+func (store *Store[T]) DropParentDb() error {
+	return store.db.Drop()
 }
 
 func MakeStore[T any](db *Database, entryType string, serialize func(T) ([]byte, error), deserialize func([]byte) (T, error)) *Store[T] {
