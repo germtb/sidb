@@ -23,19 +23,21 @@ type Database struct {
 }
 
 type EntryInput struct {
-	Type     string
-	Key      string
-	Value    []byte
-	Grouping string
+	Type         string
+	Key          string
+	Value        []byte
+	Grouping     string
+	SortingIndex *int64
+	Timestamp    *int64 // Optional: if provided, will be used instead of current time
 }
 
 type DbEntry struct {
-	Id        int64
-	Timestamp int64
-	Type      string
-	Key       string
-	Value     []byte
-	Grouping  string
+	Timestamp    int64
+	Type         string
+	Key          string
+	Value        []byte
+	Grouping     string
+	SortingIndex *int64
 }
 
 func RootPath() string {
@@ -66,20 +68,19 @@ func Init(namespace []string, name string) (*Database, error) {
 	}
 
 	createTableSQL := `CREATE TABLE IF NOT EXISTS entries (
-		"id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+		"key" TEXT NOT NULL,
+		"type" TEXT NOT NULL,
     	"timestamp" INTEGER NOT NULL,
-		"type" VARCHAR(255),
+		"grouping" TEXT,
+		"sortingIndex" INTEGER,
 		"value" BLOB,
-		"key" VARCHAR(255) NOT NULL,
-		"grouping" VARCHAR(255),
-		UNIQUE("type", "key")
-	);
+		PRIMARY KEY ("key", "type")
+	) WITHOUT ROWID;
 
-		CREATE INDEX IF NOT EXISTS idx_entries_timestamp ON entries(timestamp);
-		CREATE INDEX IF NOT EXISTS idx_entries_type ON entries(type);
-		CREATE INDEX IF NOT EXISTS idx_entries_type_key ON entries(type, key);
-		CREATE INDEX IF NOT EXISTS idx_entries_key ON entries(key);
-		CREATE INDEX IF NOT EXISTS idx_entries_grouping ON entries(grouping);
+		CREATE INDEX IF NOT EXISTS idx_entries_key ON entries(type);
+		CREATE INDEX IF NOT EXISTS idx_entries_grouping ON entries(type, grouping);
+		CREATE INDEX IF NOT EXISTS idx_entries_sorting_index ON entries(type, sortingIndex);
+		CREATE INDEX IF NOT EXISTS idx_entries_timestamp ON entries(type, timestamp);
 	`
 
 	_, err = connection.Exec(createTableSQL)
@@ -110,7 +111,7 @@ func (db *Database) Close() error {
 	return nil
 }
 
-func (db *Database) Get(id int64) (*DbEntry, error) {
+func (db *Database) Get(entryType string, key string) (*DbEntry, error) {
 	db.mutex.RLock()
 	defer db.mutex.RUnlock()
 
@@ -118,10 +119,10 @@ func (db *Database) Get(id int64) (*DbEntry, error) {
 		return nil, ErrNoDbConnection
 	}
 
-	row := db.connection.QueryRow("SELECT id, timestamp, type, value, key, grouping FROM entries WHERE id = ?", id)
+	row := db.connection.QueryRow("SELECT timestamp, type, value, key, grouping, sortingIndex FROM entries WHERE type = ? AND key = ?", entryType, key)
 
 	var entry DbEntry
-	err := row.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Value, &entry.Key, &entry.Grouping)
+	err := row.Scan(&entry.Timestamp, &entry.Type, &entry.Value, &entry.Key, &entry.Grouping, &entry.SortingIndex)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil // No entry found
@@ -133,28 +134,7 @@ func (db *Database) Get(id int64) (*DbEntry, error) {
 	return &entry, nil
 }
 
-func (db *Database) GetByKey(key string, entryType string) (*DbEntry, error) {
-	db.mutex.RLock()
-	defer db.mutex.RUnlock()
-
-	if db.connection == nil {
-		return nil, ErrNoDbConnection
-	}
-
-	row := db.connection.QueryRow("SELECT id, timestamp, type, value, key, grouping FROM entries WHERE key = ? AND type = ?", key, entryType)
-	var entry DbEntry
-	err := row.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Value, &entry.Key, &entry.Grouping)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil // No entry found
-		}
-		return nil, err
-	}
-
-	return &entry, nil
-}
-
-func (db *Database) BulkGetByKey(keys []string, entryType string) (map[string]DbEntry, error) {
+func (db *Database) BulkGet(entryType string, keys []string) (map[string]DbEntry, error) {
 	db.mutex.RLock()
 	defer db.mutex.RUnlock()
 
@@ -168,7 +148,7 @@ func (db *Database) BulkGetByKey(keys []string, entryType string) (map[string]Db
 	placeholders := strings.Repeat("?,", len(keys))
 	placeholders = placeholders[:len(placeholders)-1] // Remove trailing comma
 
-	query := fmt.Sprintf("SELECT id, timestamp, type, value, key, grouping FROM entries WHERE key IN (%s) AND type = ?", placeholders)
+	query := fmt.Sprintf("SELECT timestamp, type, value, key, grouping, sortingIndex FROM entries WHERE key IN (%s) AND type = ?", placeholders)
 
 	args := make([]interface{}, len(keys)+1)
 	for i, key := range keys {
@@ -186,7 +166,7 @@ func (db *Database) BulkGetByKey(keys []string, entryType string) (map[string]Db
 
 	for rows.Next() {
 		var entry DbEntry
-		if err := rows.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Value, &entry.Key, &entry.Grouping); err != nil {
+		if err := rows.Scan(&entry.Timestamp, &entry.Type, &entry.Value, &entry.Key, &entry.Grouping, &entry.SortingIndex); err != nil {
 			return nil, err
 		}
 		entries[entry.Key] = entry
@@ -198,69 +178,37 @@ func (db *Database) BulkGetByKey(keys []string, entryType string) (map[string]Db
 	return entries, nil
 }
 
-func (db *Database) GetByGrouping(grouping string, entryType string) ([]DbEntry, error) {
-	db.mutex.RLock()
-	defer db.mutex.RUnlock()
-
-	if db.connection == nil {
-		return nil, ErrNoDbConnection
-	}
-
-	rows, err := db.connection.Query("SELECT id, timestamp, type, value, key, grouping FROM entries WHERE grouping = ? AND type = ?", grouping, entryType)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var entries []DbEntry
-	for rows.Next() {
-		var entry DbEntry
-		if err := rows.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Value, &entry.Key, &entry.Grouping); err != nil {
-			return nil, err
-		}
-		entries = append(entries, entry)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return entries, nil
-}
-
-func (db *Database) Upsert(entry EntryInput) (int64, error) {
+func (db *Database) Upsert(entry EntryInput) error {
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
 
 	if db.connection == nil {
-		return 0, ErrNoDbConnection
+		return ErrNoDbConnection
 	}
 
-	stmt, err := db.connection.Prepare("INSERT OR REPLACE INTO entries(type, value, timestamp, key, grouping) VALUES(?, ?, ?, ?, ?)")
+	stmt, err := db.connection.Prepare("INSERT OR REPLACE INTO entries(type, value, timestamp, key, grouping, sortingIndex) VALUES(?, ?, ?, ?, ?, ?)")
 	if err != nil {
-		return 0, err
+		return err
 	}
 	defer stmt.Close()
 
-	result, err := stmt.Exec(entry.Type, entry.Value, time.Now().UnixMilli(), entry.Key, entry.Grouping)
-	if err != nil {
-		return 0, err
+	timestamp := time.Now().UnixMilli()
+	if entry.Timestamp != nil {
+		timestamp = *entry.Timestamp
 	}
 
-	id, err := result.LastInsertId()
-	if err != nil {
-		return 0, err
-	}
+	_, err = stmt.Exec(entry.Type, entry.Value, timestamp, entry.Key, entry.Grouping, entry.SortingIndex)
 
-	return id, nil
+	return err
 }
 
 func (db *Database) UpsertReturning(entry EntryInput) (*DbEntry, error) {
-	id, err := db.Upsert(entry)
+	err := db.Upsert(entry)
 	if err != nil {
 		return nil, err
 	}
 
-	return db.Get(id)
+	return db.Get(entry.Type, entry.Key)
 }
 
 func (db *Database) Update(entry EntryInput) error {
@@ -282,30 +230,7 @@ func (db *Database) Update(entry EntryInput) error {
 	return err
 }
 
-func (db *Database) Delete(id int64) error {
-	db.mutex.Lock()
-	defer db.mutex.Unlock()
-
-	if db.connection == nil {
-		return ErrNoDbConnection
-	}
-
-	stmt, err := db.connection.Prepare("DELETE FROM entries WHERE id = ?")
-	if err != nil {
-		return err
-	}
-
-	defer stmt.Close()
-
-	_, err = stmt.Exec(id)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (db *Database) DeleteByKey(key string, entryType string) error {
+func (db *Database) Delete(entryType string, key string) error {
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
 
@@ -318,6 +243,7 @@ func (db *Database) DeleteByKey(key string, entryType string) error {
 		return err
 	}
 	defer stmt.Close()
+
 	_, err = stmt.Exec(key, entryType)
 	if err != nil {
 		return err
@@ -325,7 +251,7 @@ func (db *Database) DeleteByKey(key string, entryType string) error {
 	return nil
 }
 
-func (db *Database) DeleteByGrouping(grouping string, entryType string) error {
+func (db *Database) BulkDelete(entryType string, keys []string) error {
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
 
@@ -333,20 +259,45 @@ func (db *Database) DeleteByGrouping(grouping string, entryType string) error {
 		return ErrNoDbConnection
 	}
 
-	stmt, err := db.connection.Prepare("DELETE FROM entries WHERE grouping = ? AND type = ?")
+	if len(keys) == 0 {
+		return nil
+	}
+
+	placeholders := strings.Repeat("?,", len(keys))
+	placeholders = placeholders[:len(placeholders)-1] // Remove trailing comma
+
+	query := fmt.Sprintf("DELETE FROM entries WHERE key IN (%s) AND type = ?", placeholders)
+
+	args := make([]interface{}, len(keys)+1)
+	for i, key := range keys {
+		args[i] = key
+	}
+	args[len(keys)] = entryType
+
+	_, err := db.connection.Exec(query, args...)
+
+	return err
+}
+
+func (db *Database) DeleteByGrouping(entryType string, grouping string) error {
+	db.mutex.Lock()
+	defer db.mutex.Unlock()
+
+	if db.connection == nil {
+		return ErrNoDbConnection
+	}
+
+	stmt, err := db.connection.Prepare("DELETE FROM entries WHERE type = ? AND grouping = ?")
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 
-	_, err = stmt.Exec(grouping, entryType)
-	if err != nil {
-		return err
-	}
-	return nil
+	_, err = stmt.Exec(entryType, grouping)
+	return err
 }
 
-func (db *Database) BulkPutForget(entries []EntryInput) error {
+func (db *Database) BulkUpsert(entries []EntryInput) error {
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
 
@@ -359,7 +310,7 @@ func (db *Database) BulkPutForget(entries []EntryInput) error {
 		return err
 	}
 
-	stmt, err := tx.Prepare("INSERT INTO entries(type, value, timestamp, key, grouping) VALUES(?, ?, ?, ?, ?)")
+	stmt, err := tx.Prepare("INSERT OR REPLACE INTO entries(type, value, timestamp, key, grouping, sortingIndex) VALUES(?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		tx.Rollback()
 		return err
@@ -367,48 +318,17 @@ func (db *Database) BulkPutForget(entries []EntryInput) error {
 	defer stmt.Close()
 
 	for _, e := range entries {
-		if _, err := stmt.Exec(e.Type, e.Value, time.Now().UnixMilli(), e.Key, e.Grouping); err != nil {
+		timestamp := time.Now().UnixMilli()
+		if e.Timestamp != nil {
+			timestamp = *e.Timestamp
+		}
+		if _, err := stmt.Exec(e.Type, e.Value, timestamp, e.Key, e.Grouping, e.SortingIndex); err != nil {
 			tx.Rollback()
 			return err
 		}
 	}
 
-	err = tx.Commit()
-
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (db *Database) BulkLoad(limit int) ([]DbEntry, error) {
-	db.mutex.RLock()
-	defer db.mutex.RUnlock()
-
-	if db.connection == nil {
-		return nil, ErrNoDbConnection
-	}
-
-	rows, err := db.connection.Query("SELECT id, timestamp, type, value, key, grouping FROM entries ORDER BY timestamp DESC LIMIT ?", limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var entries []DbEntry
-	for rows.Next() {
-		var entry DbEntry
-		if err := rows.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Value, &entry.Key, &entry.Grouping); err != nil {
-			return nil, err
-		}
-		entries = append(entries, entry)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return entries, nil
+	return tx.Commit()
 }
 
 func (db *Database) Count() (int64, error) {
@@ -430,14 +350,29 @@ func (db *Database) Count() (int64, error) {
 	return count, nil
 }
 
+type SortField int
+
+const (
+	SortByTimestamp SortField = iota
+	SortBySortingIndex
+)
+
+type SortOrder int
+
+const (
+	Ascending SortOrder = iota
+	Descending
+)
+
 type QueryParams struct {
-	From       *int64
-	To         *int64
-	Type       *string
-	Limit      *int
-	Offset     *int
-	Descending bool
-	Grouping   *string
+	From      *int64
+	To        *int64
+	Type      *string
+	Limit     *int
+	Offset    *int
+	Grouping  *string
+	SortField SortField
+	SortOrder SortOrder
 }
 
 func (db *Database) Query(
@@ -450,7 +385,7 @@ func (db *Database) Query(
 		return nil, ErrNoDbConnection
 	}
 
-	query := "SELECT id, timestamp, type, value, key, grouping FROM entries WHERE 1=1"
+	query := "SELECT timestamp, type, value, key, grouping, sortingIndex FROM entries WHERE 1=1"
 
 	var args []interface{}
 
@@ -469,10 +404,21 @@ func (db *Database) Query(
 		args = append(args, *params.To)
 	}
 
-	if params.Descending {
-		query += " ORDER BY timestamp DESC"
-	} else {
-		query += " ORDER BY timestamp ASC"
+	if params.Grouping != nil {
+		query += " AND grouping = ?"
+		args = append(args, *params.Grouping)
+	}
+
+	order := "DESC"
+	if params.SortOrder == Ascending {
+		order = "ASC"
+	}
+
+	switch params.SortField {
+	case SortByTimestamp:
+		query += " ORDER BY timestamp " + order
+	case SortBySortingIndex:
+		query += " ORDER BY sortingIndex " + order
 	}
 
 	if params.Limit != nil {
@@ -484,12 +430,6 @@ func (db *Database) Query(
 		query += " OFFSET ?"
 		args = append(args, *params.Offset)
 	}
-
-	if params.Grouping != nil {
-		query += " AND grouping = ?"
-		args = append(args, *params.Grouping)
-	}
-
 	rows, err := db.connection.Query(query, args...)
 	if err != nil {
 		return nil, err
@@ -499,7 +439,7 @@ func (db *Database) Query(
 	var entries []DbEntry
 	for rows.Next() {
 		var entry DbEntry
-		if err := rows.Scan(&entry.Id, &entry.Timestamp, &entry.Type, &entry.Value, &entry.Key, &entry.Grouping); err != nil {
+		if err := rows.Scan(&entry.Timestamp, &entry.Type, &entry.Value, &entry.Key, &entry.Grouping, &entry.SortingIndex); err != nil {
 			return nil, err
 		}
 		entries = append(entries, entry)
@@ -513,13 +453,180 @@ func (db *Database) Query(
 }
 
 func (db *Database) Drop() error {
-	db.Close()
+	err := db.Close()
+
+	if err != nil {
+		return err
+	}
 
 	db.mutex.Lock()
 	defer db.mutex.Unlock()
+	return os.Remove(db.Path)
+}
 
-	if err := os.Remove(db.Path); err != nil {
+// A Store is a generic type-safe wrapper around Database for a specific entry type.
+
+type Store[T any] struct {
+	db          *Database
+	entryType   string
+	serialize   func(T) ([]byte, error)
+	deserialize func([]byte) (T, error)
+}
+
+func (store *Store[T]) Get(key string) (*T, error) {
+	entry, err := store.db.Get(store.entryType, key)
+	if err != nil || entry == nil {
+		return nil, err
+	}
+	value, err := store.deserialize(entry.Value)
+	if err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func (store *Store[T]) BulkGet(keys []string) (map[string]T, error) {
+	entries, err := store.db.BulkGet(store.entryType, keys)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]T)
+	for key, entry := range entries {
+		value, err := store.deserialize(entry.Value)
+		if err != nil {
+			return nil, err
+		}
+		result[key] = value
+	}
+	return result, nil
+}
+
+type StoreEntryInput[T any] struct {
+	Key          string
+	Value        T
+	Grouping     string
+	SortingIndex *int64
+	Timestamp    *int64 // Optional: if provided, will be used instead of current time
+}
+
+func (store *Store[T]) Upsert(entry StoreEntryInput[T]) error {
+	serialized, err := store.serialize(entry.Value)
+	if err != nil {
 		return err
 	}
-	return nil
+	return store.db.Upsert(EntryInput{
+		Type:         store.entryType,
+		Key:          entry.Key,
+		Value:        serialized,
+		Grouping:     entry.Grouping,
+		SortingIndex: entry.SortingIndex,
+		Timestamp:    entry.Timestamp,
+	})
+}
+
+func (store *Store[T]) Delete(key string) error {
+	return store.db.Delete(store.entryType, key)
+}
+
+func (store *Store[T]) BulkDelete(keys []string) error {
+	return store.db.BulkDelete(store.entryType, keys)
+}
+
+func (store *Store[T]) DeleteByGrouping(grouping string) error {
+	return store.db.DeleteByGrouping(store.entryType, grouping)
+}
+
+func (store *Store[T]) BulkUpsert(entries []StoreEntryInput[T]) error {
+	var dbEntries []EntryInput
+	for _, entry := range entries {
+		serialized, err := store.serialize(entry.Value)
+		if err != nil {
+			return err
+		}
+		dbEntries = append(dbEntries, EntryInput{
+			Type:         store.entryType,
+			Key:          entry.Key,
+			Value:        serialized,
+			Grouping:     entry.Grouping,
+			SortingIndex: entry.SortingIndex,
+			Timestamp:    entry.Timestamp,
+		})
+	}
+	return store.db.BulkUpsert(dbEntries)
+}
+
+func (store *Store[T]) Count() (int64, error) {
+	store.db.mutex.RLock()
+	defer store.db.mutex.RUnlock()
+
+	if store.db.connection == nil {
+		return 0, ErrNoDbConnection
+	}
+
+	row := store.db.connection.QueryRow("SELECT COUNT(*) FROM entries WHERE type = ?", store.entryType)
+
+	var count int64
+	err := row.Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+
+	return count, nil
+}
+
+type StoreQueryParams struct {
+	From      *int64
+	To        *int64
+	Limit     *int
+	Offset    *int
+	Grouping  *string
+	SortField SortField
+	SortOrder SortOrder
+}
+
+func (store *Store[T]) Query(params StoreQueryParams) ([]T, error) {
+	entries, err := store.db.Query(QueryParams{
+		From:      params.From,
+		To:        params.To,
+		Type:      &store.entryType,
+		Limit:     params.Limit,
+		Offset:    params.Offset,
+		Grouping:  params.Grouping,
+		SortField: params.SortField,
+		SortOrder: params.SortOrder,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var results []T
+	for _, entry := range entries {
+		value, err := store.deserialize(entry.Value)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, value)
+	}
+	return results, nil
+}
+
+func (s *Store[T]) QueryEntries(params StoreQueryParams) ([]DbEntry, error) {
+	return s.db.Query(QueryParams{
+		From:      params.From,
+		To:        params.To,
+		Type:      &s.entryType,
+		Limit:     params.Limit,
+		Offset:    params.Offset,
+		Grouping:  params.Grouping,
+		SortField: params.SortField,
+		SortOrder: params.SortOrder,
+	})
+}
+
+func MakeStore[T any](db *Database, entryType string, serialize func(T) ([]byte, error), deserialize func([]byte) (T, error)) *Store[T] {
+	return &Store[T]{
+		db:          db,
+		entryType:   entryType,
+		serialize:   serialize,
+		deserialize: deserialize,
+	}
 }

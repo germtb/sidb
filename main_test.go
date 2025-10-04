@@ -1,6 +1,8 @@
 package sidb
 
 import (
+	"encoding/json"
+	"fmt"
 	"path"
 	"testing"
 )
@@ -20,7 +22,7 @@ func TestInit(t *testing.T) {
 	}
 }
 
-func TestBulkPutForget(t *testing.T) {
+func TestBulkPut(t *testing.T) {
 	namespace := []string{"test_namespace"}
 	name := "test_db"
 	db, err := Init(namespace, name)
@@ -31,12 +33,12 @@ func TestBulkPutForget(t *testing.T) {
 
 	entryType := "test_type"
 	data := []byte("test_data")
-	err = db.BulkPutForget([]EntryInput{{Type: entryType, Value: data, Key: "test_key", Grouping: ""}})
+	err = db.BulkUpsert([]EntryInput{{Type: entryType, Value: data, Key: "test_key", Grouping: ""}})
 	if err != nil {
 		t.Fatalf("Failed to put entry: %v", err)
 	}
 
-	entries, err := db.BulkLoad(10)
+	entries, err := db.Query(QueryParams{Type: &entryType})
 	if err != nil {
 		t.Fatalf("Failed to load entries: %v", err)
 	}
@@ -53,7 +55,7 @@ func TestBulkPutForget(t *testing.T) {
 	}
 }
 
-func TestGetById(t *testing.T) {
+func TestGet(t *testing.T) {
 	namespace := []string{"test_namespace"}
 	name := "test_db"
 	db, err := Init(namespace, name)
@@ -64,18 +66,18 @@ func TestGetById(t *testing.T) {
 
 	entryType := "test_type"
 	data := []byte("test_data")
-	id, err := db.Upsert(EntryInput{Type: entryType, Value: data, Key: "test_key", Grouping: ""})
+	err = db.Upsert(EntryInput{Type: entryType, Value: data, Key: "test_key", Grouping: ""})
 	if err != nil {
 		t.Fatalf("Failed to put entry: %v", err)
 	}
 
-	entry, err := db.Get(id)
+	entry, err := db.Get(entryType, "test_key")
 	if err != nil {
 		t.Fatalf("Failed to get entry: %v", err)
 	}
 
-	if entry.Id != id {
-		t.Errorf("Expected entry ID %d, got %d", id, entry.Id)
+	if entry.Key != "test_key" {
+		t.Errorf("Expected entry key %s, got %s", "test_key", entry.Key)
 	}
 	if entry.Type != entryType {
 		t.Errorf("Expected entry type %s, got %s", entryType, entry.Type)
@@ -85,7 +87,7 @@ func TestGetById(t *testing.T) {
 	}
 }
 
-func TestGetByKey(t *testing.T) {
+func TestUpsert(t *testing.T) {
 	namespace := []string{"test_namespace"}
 	name := "test_db"
 	db, err := Init(namespace, name)
@@ -96,25 +98,52 @@ func TestGetByKey(t *testing.T) {
 
 	entryType := "test_type"
 	data := []byte("test_data")
-	key := "test_key"
-	_, err = db.Upsert(EntryInput{Type: entryType, Value: data, Key: key, Grouping: ""})
+	err = db.Upsert(EntryInput{Type: entryType, Value: data, Key: "test_key", Grouping: ""})
 	if err != nil {
 		t.Fatalf("Failed to put entry: %v", err)
 	}
 
-	entry, err := db.GetByKey(key, entryType)
+	entry, err := db.Get(entryType, "test_key")
 	if err != nil {
 		t.Fatalf("Failed to get entry: %v", err)
 	}
 
-	if entry.Key != key {
-		t.Errorf("Expected entry key %s, got %s", key, entry.Key)
+	if entry.Key != "test_key" {
+		t.Errorf("Expected entry key %s, got %s", "test_key", entry.Key)
 	}
+
 	if entry.Type != entryType {
 		t.Errorf("Expected entry type %s, got %s", entryType, entry.Type)
 	}
+
 	if string(entry.Value) != string(data) {
 		t.Errorf("Expected entry data %s, got %s", string(data), string(entry.Value))
+	}
+
+	err = db.Upsert(EntryInput{Type: entryType, Value: []byte("updated_data"), Key: "test_key", Grouping: ""})
+	if err != nil {
+		t.Fatalf("Failed to update entry: %v", err)
+	}
+
+	entry, err = db.Get(entryType, "test_key")
+	if err != nil {
+		t.Fatalf("Failed to get entry after update: %v", err)
+	}
+
+	if string(entry.Value) != "updated_data" {
+		t.Errorf("Expected updated entry data %s, got %s", "updated_data", string(entry.Value))
+	}
+	if entry.Key != "test_key" {
+		t.Errorf("Expected entry key %s after update, got %s", "test_key", entry.Key)
+	}
+	if entry.Type != entryType {
+		t.Errorf("Expected entry type %s after update, got %s", entryType, entry.Type)
+	}
+	if string(entry.Value) != "updated_data" {
+		t.Errorf("Expected entry data %s after update, got %s", "updated_data", string(entry.Value))
+	}
+	if string(entry.Value) != "updated_data" {
+		t.Errorf("Expected updated entry data %s, got %s", "updated_data", string(entry.Value))
 	}
 }
 
@@ -129,17 +158,17 @@ func TestDelete(t *testing.T) {
 
 	entryType := "test_type"
 	data := []byte("test_data")
-	id, err := db.Upsert(EntryInput{Type: entryType, Value: data, Key: "test_key", Grouping: ""})
+	err = db.Upsert(EntryInput{Type: entryType, Value: data, Key: "test_key", Grouping: ""})
 	if err != nil {
 		t.Fatalf("Failed to put entry: %v", err)
 	}
 
-	err = db.Delete(id)
+	err = db.Delete(entryType, "test_key")
 	if err != nil {
 		t.Fatalf("Failed to delete entry: %v", err)
 	}
 
-	entry, err := db.Get(id)
+	entry, err := db.Get(entryType, "test_key")
 
 	if err != nil {
 		t.Fatalf("Error occurred while getting deleted entry: %v", err)
@@ -150,7 +179,7 @@ func TestDelete(t *testing.T) {
 	}
 }
 
-func TestDeleteByKey(t *testing.T) {
+func TestBulkDelete(t *testing.T) {
 	namespace := []string{"test_namespace"}
 	name := "test_db"
 	db, err := Init(namespace, name)
@@ -161,24 +190,31 @@ func TestDeleteByKey(t *testing.T) {
 
 	entryType := "test_type"
 	data := []byte("test_data")
-	key := "test_key"
-	_, err = db.Upsert(EntryInput{Type: entryType, Value: data, Key: key, Grouping: ""})
+	err = db.BulkUpsert([]EntryInput{
+		{Type: entryType, Value: data, Key: "test_key_1"},
+		{Type: entryType, Value: data, Key: "test_key_2"},
+		{Type: entryType, Value: data, Key: "test_key_3"},
+	})
 	if err != nil {
-		t.Fatalf("Failed to put entry: %v", err)
+		t.Fatalf("Failed to put entries: %v", err)
 	}
 
-	err = db.DeleteByKey(key, entryType)
+	err = db.BulkDelete(entryType, []string{"test_key_1", "test_key_2"})
 	if err != nil {
-		t.Fatalf("Failed to delete entry by key: %v", err)
+		t.Fatalf("Failed to delete entries by grouping: %v", err)
 	}
 
-	entry, err := db.GetByKey(key, entryType)
+	entries, err := db.Query(QueryParams{Type: &entryType})
 	if err != nil {
-		t.Fatalf("Error occurred while getting deleted entry: %v", err)
+		t.Fatalf("Failed to load entries: %v", err)
 	}
 
-	if entry != nil {
-		t.Errorf("Expected nil entry after deletion, got %+v", entry)
+	if len(entries) != 1 {
+		t.Fatalf("Expected 1 entry after bulk delete, got %d", len(entries))
+	}
+
+	if entries[0].Key != "test_key_3" {
+		t.Errorf("Expected remaining entry key to be 'test_key_3', got '%s'", entries[0].Key)
 	}
 }
 
@@ -194,7 +230,7 @@ func TestQuery(t *testing.T) {
 	type_1 := "type_1"
 	type_2 := "type_2"
 
-	err = db.BulkPutForget([]EntryInput{
+	err = db.BulkUpsert([]EntryInput{
 		{Type: type_1, Value: []byte("data_1"), Key: "key_1", Grouping: ""},
 		{Type: type_2, Value: []byte("data_2"), Key: "key_2", Grouping: ""},
 		{Type: type_1, Value: []byte("data_3"), Key: "key_3", Grouping: ""},
@@ -250,7 +286,7 @@ func TestQueryWithLimitOffset(t *testing.T) {
 	defer db.Drop()
 
 	type_1 := "type_1"
-	err = db.BulkPutForget([]EntryInput{
+	err = db.BulkUpsert([]EntryInput{
 		{Type: type_1, Value: []byte("data_1"), Key: "key_1"},
 		{Type: type_1, Value: []byte("data_2"), Key: "key_2"},
 		{Type: type_1, Value: []byte("data_3"), Key: "key_3"},
@@ -295,7 +331,7 @@ func TestUpdate(t *testing.T) {
 	entryType := "test_type"
 	data := []byte("test_data")
 	key := "test_key"
-	_, err = db.Upsert(EntryInput{Type: entryType, Value: data, Key: key, Grouping: ""})
+	err = db.Upsert(EntryInput{Type: entryType, Value: data, Key: key, Grouping: ""})
 	if err != nil {
 		t.Fatalf("Failed to put entry: %v", err)
 	}
@@ -306,7 +342,7 @@ func TestUpdate(t *testing.T) {
 		t.Fatalf("Failed to update entry: %v", err)
 	}
 
-	entry, err := db.GetByKey(key, entryType)
+	entry, err := db.Get(entryType, key)
 	if err != nil {
 		t.Fatalf("Failed to get entry: %v", err)
 	}
@@ -330,7 +366,7 @@ func TestClose(t *testing.T) {
 	}
 
 	// Attempting to use the database after closing should result in an error
-	_, err = db.BulkLoad(10)
+	_, err = db.Query(QueryParams{Type: ptr("test_type")})
 	if err == nil {
 		t.Fatalf("Expected error when using closed database, got nil")
 	}
@@ -345,22 +381,22 @@ func TestGetByGrouping(t *testing.T) {
 	}
 	defer db.Drop()
 
-	entryType := "test_type"
 	grouping := "test_group"
+	entryType := "test_type"
 	data1 := []byte("test_data_1")
 	data2 := []byte("test_data_2")
 
-	_, err = db.Upsert(EntryInput{Type: entryType, Value: data1, Key: "test_key_1", Grouping: grouping})
+	err = db.Upsert(EntryInput{Type: entryType, Value: data1, Key: "test_key_1", Grouping: grouping})
 	if err != nil {
 		t.Fatalf("Failed to put entry 1: %v", err)
 	}
 
-	_, err = db.Upsert(EntryInput{Type: entryType, Value: data2, Key: "test_key_2", Grouping: grouping})
+	err = db.Upsert(EntryInput{Type: entryType, Value: data2, Key: "test_key_2", Grouping: grouping})
 	if err != nil {
 		t.Fatalf("Failed to put entry 2: %v", err)
 	}
 
-	entries, err := db.GetByGrouping(grouping, entryType)
+	entries, err := db.Query(QueryParams{Type: &entryType, Grouping: &grouping})
 	if err != nil {
 		t.Fatalf("Failed to get entries by grouping: %v", err)
 	}
@@ -369,10 +405,10 @@ func TestGetByGrouping(t *testing.T) {
 		t.Fatalf("Expected 2 entries, got %d", len(entries))
 	}
 
-	if entries[0].Type != entryType || string(entries[0].Value) != string(data1) {
+	if entries[0].Type != "test_type" || string(entries[0].Value) != string(data1) {
 		t.Errorf("Unexpected entry: %+v", entries[0])
 	}
-	if entries[1].Type != entryType || string(entries[1].Value) != string(data2) {
+	if entries[1].Type != "test_type" || string(entries[1].Value) != string(data2) {
 		t.Errorf("Unexpected entry: %+v", entries[1])
 	}
 }
@@ -386,25 +422,25 @@ func TestDeleteByGrouping(t *testing.T) {
 	}
 	defer db.Drop()
 
-	entryType := "test_type"
 	grouping := "test_group"
+	entryType := "test_type"
 	data1 := []byte("test_data_1")
 	data2 := []byte("test_data_2")
-	_, err = db.Upsert(EntryInput{Type: entryType, Value: data1, Key: "test_key_1", Grouping: grouping})
+	err = db.Upsert(EntryInput{Type: entryType, Value: data1, Key: "test_key_1", Grouping: grouping})
 	if err != nil {
 		t.Fatalf("Failed to put entry 1: %v", err)
 	}
-	_, err = db.Upsert(EntryInput{Type: entryType, Value: data2, Key: "test_key_2", Grouping: grouping})
+	err = db.Upsert(EntryInput{Type: entryType, Value: data2, Key: "test_key_2", Grouping: grouping})
 	if err != nil {
 		t.Fatalf("Failed to put entry 2: %v", err)
 	}
 
-	err = db.DeleteByGrouping(grouping, entryType)
+	err = db.DeleteByGrouping(entryType, grouping)
 	if err != nil {
 		t.Fatalf("Failed to delete entries by grouping: %v", err)
 	}
 
-	entries, err := db.GetByGrouping(grouping, entryType)
+	entries, err := db.Query(QueryParams{Type: &entryType, Grouping: &grouping})
 	if err != nil {
 		t.Fatalf("Failed to get entries by grouping: %v", err)
 	}
@@ -414,7 +450,11 @@ func TestDeleteByGrouping(t *testing.T) {
 	}
 }
 
-func TestBulkGetByKey(t *testing.T) {
+func ptr[T any](v T) *T {
+	return &v
+}
+
+func TestQueryWithSortingIndex(t *testing.T) {
 	namespace := []string{"test_namespace"}
 	name := "test_db"
 	db, err := Init(namespace, name)
@@ -424,37 +464,215 @@ func TestBulkGetByKey(t *testing.T) {
 	defer db.Drop()
 
 	entryType := "test_type"
-	data1 := []byte("test_data_1")
-	data2 := []byte("test_data_2")
-	key1 := "test_key_1"
-	key2 := "test_key_2"
-	nonExistentKey := "non_existent_key"
-
-	_, err = db.Upsert(EntryInput{Type: entryType, Value: data1, Key: key1, Grouping: ""})
+	err = db.BulkUpsert([]EntryInput{
+		{Type: entryType, Value: []byte("data_1"), Key: "key_1", SortingIndex: ptr(int64(2))},
+		{Type: entryType, Value: []byte("data_2"), Key: "key_2", SortingIndex: ptr(int64(1))},
+		{Type: entryType, Value: []byte("data_3"), Key: "key_3", SortingIndex: ptr(int64(3))},
+	})
 	if err != nil {
-		t.Fatalf("Failed to put entry 1: %v", err)
-	}
-	_, err = db.Upsert(EntryInput{Type: entryType, Value: data2, Key: key2, Grouping: ""})
-	if err != nil {
-		t.Fatalf("Failed to put entry 2: %v", err)
+		t.Fatalf("Failed to put entries: %v", err)
 	}
 
-	keys := []string{key1, key2, nonExistentKey}
-	entries, err := db.BulkGetByKey(keys, entryType)
+	entries, err := db.Query(QueryParams{
+		Type:      &entryType,
+		SortField: SortBySortingIndex,
+		SortOrder: Ascending,
+	})
+
 	if err != nil {
-		t.Fatalf("Failed to bulk get entries by keys: %v", err)
-	}
-	if len(entries) != 2 {
-		t.Fatalf("Expected 2 entries, got %d", len(entries))
+		t.Fatalf("Failed to query entries: %v", err)
 	}
 
-	if entry, exists := entries[key1]; !exists || entry.Type != entryType || string(entry.Value) != string(data1) {
-		t.Errorf("Unexpected or missing entry for key1: %+v", entry)
+	if entries[0].Key != "key_2" || string(entries[0].Value) != "data_2" {
+		t.Errorf("Unexpected first entry: %+v", entries[0])
 	}
-	if entry, exists := entries[key2]; !exists || entry.Type != entryType || string(entry.Value) != string(data2) {
-		t.Errorf("Unexpected or missing entry for key2: %+v", entry)
+	if entries[1].Key != "key_1" || string(entries[1].Value) != "data_1" {
+		t.Errorf("Unexpected second entry: %+v", entries[1])
 	}
-	if _, exists := entries[nonExistentKey]; exists {
-		t.Errorf("Expected no entry for non-existent key, but found one")
+	if entries[2].Key != "key_3" || string(entries[2].Value) != "data_3" {
+		t.Errorf("Unexpected third entry: %+v", entries[2])
+	}
+
+	entriesDesc, err := db.Query(QueryParams{
+		Type:      &entryType,
+		SortField: SortBySortingIndex,
+		SortOrder: Descending,
+	})
+
+	if err != nil {
+		t.Fatalf("Failed to query entries in descending order: %v", err)
+	}
+
+	if entriesDesc[0].Key != "key_3" || string(entriesDesc[0].Value) != "data_3" {
+		t.Errorf("Unexpected first entry in desc order: %+v", entriesDesc[0])
+	}
+	if entriesDesc[1].Key != "key_1" || string(entriesDesc[1].Value) != "data_1" {
+		t.Errorf("Unexpected second entry in desc order: %+v", entriesDesc[1])
+	}
+	if entriesDesc[2].Key != "key_2" || string(entriesDesc[2].Value) != "data_2" {
+		t.Errorf("Unexpected third entry in desc order: %+v", entriesDesc[2])
+	}
+}
+
+func TestCount(t *testing.T) {
+	namespace := []string{"test_namespace"}
+	name := "test_db"
+	db, err := Init(namespace, name)
+	if err != nil {
+		t.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer db.Drop()
+
+	entryType := "test_type"
+	err = db.BulkUpsert([]EntryInput{
+		{Type: entryType, Value: []byte("data_1"), Key: "key_1"},
+		{Type: entryType, Value: []byte("data_2"), Key: "key_2"},
+		{Type: entryType, Value: []byte("data_3"), Key: "key_3"},
+	})
+	if err != nil {
+		t.Fatalf("Failed to put entries: %v", err)
+	}
+
+	count, err := db.Count()
+	if err != nil {
+		t.Fatalf("Failed to count entries: %v", err)
+	}
+
+	if count != 3 {
+		t.Errorf("Expected count 3, got %d", count)
+	}
+}
+
+type testItem struct {
+	Name  string
+	Value int
+}
+
+func serializeTestItem(item testItem) ([]byte, error) {
+	return json.Marshal(item)
+}
+
+func deserializeTestItem(data []byte) (testItem, error) {
+	var item testItem
+	err := json.Unmarshal(data, &item)
+	return item, err
+}
+
+func TestStoreUpsertGetDelete(t *testing.T) {
+	namespace := []string{"test_namespace"}
+	name := "test_store_db"
+	db, err := Init(namespace, name)
+	if err != nil {
+		t.Fatalf("Failed to init db: %v", err)
+	}
+	defer db.Drop()
+
+	store := MakeStore(db, "test_type", serializeTestItem, deserializeTestItem)
+
+	item := testItem{Name: "one", Value: 1}
+	input := StoreEntryInput[testItem]{Key: "key_1", Value: item}
+
+	// --- Upsert ---
+	if err := store.Upsert(input); err != nil {
+		t.Fatalf("Failed to upsert: %v", err)
+	}
+
+	// --- Get ---
+	got, err := store.Get("key_1")
+	if err != nil {
+		t.Fatalf("Failed to get: %v", err)
+	}
+	if got == nil {
+		t.Fatalf("Expected item, got nil")
+	}
+	if got.Name != item.Name || got.Value != item.Value {
+		t.Errorf("Expected %+v, got %+v", item, *got)
+	}
+
+	// --- Update ---
+	item.Value = 99
+	input.Value = item
+	if err := store.Upsert(input); err != nil {
+		t.Fatalf("Failed to update: %v", err)
+	}
+
+	got, err = store.Get("key_1")
+	if err != nil {
+		t.Fatalf("Failed to get after update: %v", err)
+	}
+	if got.Value != 99 {
+		t.Errorf("Expected updated Value=99, got %d", got.Value)
+	}
+
+	// --- Delete ---
+	if err := store.Delete("key_1"); err != nil {
+		t.Fatalf("Failed to delete: %v", err)
+	}
+	got, err = store.Get("key_1")
+	if err != nil {
+		t.Fatalf("Get after delete returned error: %v", err)
+	}
+	if got != nil {
+		t.Errorf("Expected nil after delete, got %+v", got)
+	}
+}
+
+func TestStore_BulkUpsertAndQuery(t *testing.T) {
+	namespace := []string{"test_namespace"}
+	name := "test_store_bulk"
+	db, err := Init(namespace, name)
+	if err != nil {
+		t.Fatalf("Failed to init db: %v", err)
+	}
+	defer db.Drop()
+
+	store := MakeStore(db, "bulk_type", serializeTestItem, deserializeTestItem)
+
+	inputs := []StoreEntryInput[testItem]{
+		{Key: "key_a", Value: testItem{Name: "A", Value: 10}, Grouping: "g1"},
+		{Key: "key_b", Value: testItem{Name: "B", Value: 20}, Grouping: "g1"},
+		{Key: "key_c", Value: testItem{Name: "C", Value: 30}, Grouping: "g2"},
+	}
+
+	if err := store.BulkUpsert(inputs); err != nil {
+		t.Fatalf("Failed BulkUpsert: %v", err)
+	}
+
+	results, err := store.Query(StoreQueryParams{})
+	if err != nil {
+		t.Fatalf("Failed Query(): %v", err)
+	}
+
+	if len(results) != len(inputs) {
+		t.Fatalf("Expected %d items, got %d", len(inputs), len(results))
+	}
+
+	expected := map[string]int{"A": 10, "B": 20, "C": 30}
+	for _, got := range results {
+		if expected[got.Name] != got.Value {
+			t.Errorf("Unexpected value for %s: %d", got.Name, got.Value)
+		}
+	}
+}
+
+func TestStoreSerializationError(t *testing.T) {
+	namespace := []string{"test_namespace"}
+	name := "test_store_error"
+	db, err := Init(namespace, name)
+	if err != nil {
+		t.Fatalf("Failed to init db: %v", err)
+	}
+	defer db.Drop()
+
+	badSerializer := func(_ testItem) ([]byte, error) {
+		return nil, fmt.Errorf("serialization failed intentionally")
+	}
+
+	store := MakeStore[testItem](db, "bad_store", badSerializer, deserializeTestItem)
+	input := StoreEntryInput[testItem]{Key: "k", Value: testItem{Name: "bad"}}
+
+	err = store.Upsert(input)
+	if err == nil {
+		t.Fatalf("Expected serialization error, got nil")
 	}
 }
