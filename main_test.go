@@ -567,7 +567,7 @@ func TestStoreUpsertGetDelete(t *testing.T) {
 	}
 	defer db.Drop()
 
-	store := MakeStore(db, "test_type", serializeTestItem, deserializeTestItem)
+	store := MakeStore(db, "test_type", serializeTestItem, deserializeTestItem, nil)
 
 	item := testItem{Name: "one", Value: 1}
 	input := StoreEntryInput[testItem]{Key: "key_1", Value: item}
@@ -609,18 +609,7 @@ func TestStoreUpsertGetDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get after delete returned error: %v", err)
 	}
-}
-
-func TestStore_BulkUpsertAndQuery(t *testing.T) {
-	namespace := []string{"test_namespace"}
-	name := "test_store_bulk"
-	db, err := Init(namespace, name)
-	if err != nil {
-		t.Fatalf("Failed to init db: %v", err)
-	}
-	defer db.Drop()
-
-	store := MakeStore(db, "bulk_type", serializeTestItem, deserializeTestItem)
+	MakeStore(db, "bulk_type", serializeTestItem, deserializeTestItem, nil)
 
 	inputs := []StoreEntryInput[testItem]{
 		{Key: "key_a", Value: testItem{Name: "A", Value: 10}, Grouping: "g1"},
@@ -662,11 +651,54 @@ func TestStoreSerializationError(t *testing.T) {
 		return nil, fmt.Errorf("serialization failed intentionally")
 	}
 
-	store := MakeStore(db, "bad_store", badSerializer, deserializeTestItem)
+	store := MakeStore(db, "bad_store", badSerializer, deserializeTestItem, nil)
 	input := StoreEntryInput[testItem]{Key: "k", Value: testItem{Name: "bad"}}
 
 	err = store.Upsert(input)
 	if err == nil {
 		t.Fatalf("Expected serialization error, got nil")
+	}
+}
+
+func TestStoreWithSortingIndex(t *testing.T) {
+	namespace := []string{"test_namespace"}
+	name := "test_store_sorting"
+	db, err := Init(namespace, name)
+	if err != nil {
+		t.Fatalf("Failed to init db: %v", err)
+	}
+	defer db.Drop()
+
+	deriveSortingIndex := func(item testItem) *int64 {
+		si := int64(item.Value)
+		return &si
+	}
+
+	store := MakeStore(db, "sort_store", serializeTestItem, deserializeTestItem, deriveSortingIndex)
+
+	items := []StoreEntryInput[testItem]{
+		{Key: "k1", Value: testItem{Name: "Item1", Value: 30}},
+		{Key: "k2", Value: testItem{Name: "Item2", Value: 10}},
+		{Key: "k3", Value: testItem{Name: "Item3", Value: 20}},
+	}
+
+	if err := store.BulkUpsert(items); err != nil {
+		t.Fatalf("Failed BulkUpsert: %v", err)
+	}
+	results, err := store.Query(StoreQueryParams{
+		SortField: SortBySortingIndex,
+		SortOrder: Ascending,
+	})
+	if err != nil {
+		t.Fatalf("Failed Query(): %v", err)
+	}
+	if len(results) != len(items) {
+		t.Fatalf("Expected %d items, got %d", len(items), len(results))
+	}
+	expectedOrder := []string{"Item2", "Item3", "Item1"}
+	for i, got := range results {
+		if got.Name != expectedOrder[i] {
+			t.Errorf("At index %d, expected %s, got %s", i, expectedOrder[i], got.Name)
+		}
 	}
 }

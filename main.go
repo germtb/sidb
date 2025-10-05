@@ -467,10 +467,11 @@ func (db *Database) Drop() error {
 // A Store is a generic type-safe wrapper around Database for a specific entry type.
 
 type Store[T any] struct {
-	db          *Database
-	entryType   string
-	serialize   func(T) ([]byte, error)
-	deserialize func([]byte) (T, error)
+	db                 *Database
+	entryType          string
+	serialize          func(T) ([]byte, error)
+	deserialize        func([]byte) (T, error)
+	deriveSortingIndex func(T) *int64
 }
 
 func (store *Store[T]) Get(key string) (T, error) {
@@ -499,11 +500,10 @@ func (store *Store[T]) BulkGet(keys []string) (map[string]T, error) {
 }
 
 type StoreEntryInput[T any] struct {
-	Key          string
-	Value        T
-	Grouping     string
-	SortingIndex *int64
-	Timestamp    *int64 // Optional: if provided, will be used instead of current time
+	Key       string
+	Value     T
+	Grouping  string
+	Timestamp *int64 // Optional: if provided, will be used instead of current time
 }
 
 func (store *Store[T]) Upsert(entry StoreEntryInput[T]) error {
@@ -511,12 +511,18 @@ func (store *Store[T]) Upsert(entry StoreEntryInput[T]) error {
 	if err != nil {
 		return err
 	}
+
+	var sortingIndex *int64
+	if store.deriveSortingIndex != nil {
+		sortingIndex = store.deriveSortingIndex(entry.Value)
+	}
+
 	return store.db.Upsert(EntryInput{
 		Type:         store.entryType,
 		Key:          entry.Key,
 		Value:        serialized,
 		Grouping:     entry.Grouping,
-		SortingIndex: entry.SortingIndex,
+		SortingIndex: sortingIndex,
 		Timestamp:    entry.Timestamp,
 	})
 }
@@ -540,12 +546,16 @@ func (store *Store[T]) BulkUpsert(entries []StoreEntryInput[T]) error {
 		if err != nil {
 			return err
 		}
+		var sortingIndex *int64
+		if store.deriveSortingIndex != nil {
+			sortingIndex = store.deriveSortingIndex(entry.Value)
+		}
 		dbEntries = append(dbEntries, EntryInput{
 			Type:         store.entryType,
 			Key:          entry.Key,
 			Value:        serialized,
 			Grouping:     entry.Grouping,
-			SortingIndex: entry.SortingIndex,
+			SortingIndex: sortingIndex,
 			Timestamp:    entry.Timestamp,
 		})
 	}
@@ -623,11 +633,17 @@ func (store *Store[T]) DropParentDb() error {
 	return store.db.Drop()
 }
 
-func MakeStore[T any](db *Database, entryType string, serialize func(T) ([]byte, error), deserialize func([]byte) (T, error)) *Store[T] {
+func MakeStore[T any](
+	db *Database,
+	entryType string,
+	serialize func(T) ([]byte, error),
+	deserialize func([]byte) (T, error),
+	deriveSortingIndex func(T) *int64) *Store[T] {
 	return &Store[T]{
-		db:          db,
-		entryType:   entryType,
-		serialize:   serialize,
-		deserialize: deserialize,
+		db:                 db,
+		entryType:          entryType,
+		serialize:          serialize,
+		deserialize:        deserialize,
+		deriveSortingIndex: deriveSortingIndex,
 	}
 }
