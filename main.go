@@ -633,6 +633,10 @@ func (store *Store[T]) DropParentDb() error {
 	return store.db.Drop()
 }
 
+func (store *Store[T]) GetParentDb() *Database {
+	return store.db
+}
+
 func MakeStore[T any](
 	db *Database,
 	entryType string,
