@@ -1,4 +1,4 @@
-module sidb
+module github.com/germtb/sidb
 
 go 1.23.4
 
